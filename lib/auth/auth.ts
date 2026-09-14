@@ -15,6 +15,49 @@ const scryptAsync = promisify(scrypt);
 export const SESSION_COOKIE = "flm_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 días
 
+/**
+ * Tope de sesiones activas por usuario: al crear una nueva se revocan las
+ * más antiguas. Mitiga acumulación de sesiones en dispositivos compartidos.
+ */
+export const MAX_ACTIVE_SESSIONS = 10;
+
+/** Expiración deslizante opt-in vía env (default: desactivada). */
+function slidingEnabled(): boolean {
+  return process.env.FLM_SESSION_SLIDING === "true";
+}
+
+/** Normaliza un email para comparación y almacenamiento (minúsculas + trim). */
+export function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Validación de formato de email en capa de servicio (defensa en profundidad:
+ * los handlers ya validan con Zod). Lanza con code=INVALID_EMAIL.
+ */
+export function assertValidEmail(email: string): void {
+  if (!EMAIL_RE.test(email)) {
+    const err = new Error("Email inválido");
+    (err as Error & { code: string }).code = "INVALID_EMAIL";
+    throw err;
+  }
+}
+
+/** Largo mínimo de contraseña (el schema de registro ya lo exige; esto es defensa en profundidad). */
+export const MIN_PASSWORD_LENGTH = 8;
+
+export function assertPasswordPolicy(password: string): void {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    const err = new Error(
+      `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`
+    );
+    (err as Error & { code: string }).code = "WEAK_PASSWORD";
+    throw err;
+  }
+}
+
 function sessionSecret(): string {
   const s = process.env.FLM_SESSION_SECRET;
   if (!s) {
@@ -59,6 +102,14 @@ export async function createSession(userId: string): Promise<string> {
   const id = newId();
   const now = Date.now();
   await transact((db) => {
+    // Revoca las sesiones más antiguas si se supera el tope por usuario.
+    const mine = (Object.values(db.sessions) as unknown as SessionDoc[])
+      .filter((s) => s.userId === userId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    while (mine.length >= MAX_ACTIVE_SESSIONS) {
+      const oldest = mine.shift();
+      if (oldest) delete db.sessions[oldest.id];
+    }
     db.sessions[id] = {
       id,
       userId,
@@ -104,9 +155,20 @@ export async function getAuth(): Promise<AuthContext | null> {
     (db) => db.sessions[sessionId] as unknown as SessionDoc | undefined
   );
   if (!session) return null;
-  if (new Date(session.expiresAt).getTime() < Date.now()) {
+  const expiresAtMs = new Date(session.expiresAt).getTime();
+  if (expiresAtMs < Date.now()) {
     await destroySession(token);
     return null;
+  }
+  // Expiración deslizante (opt-in): si queda menos de la mitad del TTL,
+  // extiende la sesión otro período completo de actividad.
+  if (slidingEnabled() && expiresAtMs - Date.now() < SESSION_TTL_MS / 2) {
+    await transact((db) => {
+      const s = db.sessions[sessionId] as unknown as SessionDoc | undefined;
+      if (s) {
+        s.expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+      }
+    });
   }
   const user = await read(
     (db) => db.users[session.userId] as unknown as User | undefined
@@ -154,10 +216,13 @@ export async function createUser(input: {
   displayName: string;
   role?: Role;
 }): Promise<User> {
+  const email = normalizeEmail(input.email);
+  assertValidEmail(email);
+  assertPasswordPolicy(input.password);
   const passwordHash = await hashPassword(input.password);
   const user: User = {
     id: newId(),
-    email: input.email.toLowerCase().trim(),
+    email,
     passwordHash,
     role: input.role ?? "RESIDENT",
     displayName: input.displayName,
@@ -171,11 +236,26 @@ export async function createUser(input: {
 }
 
 export async function findUserByEmail(email: string): Promise<User | undefined> {
-  const normalized = email.toLowerCase().trim();
+  const normalized = normalizeEmail(email);
   return read((db) => {
     const users = Object.values(db.users) as unknown as User[];
     return users.find((u) => u.email === normalized);
   });
+}
+
+/**
+ * Lista las sesiones activas (no expiradas) de un usuario, más recientes
+ * primero. Base para una futura pantalla "Mis sesiones" con revocación.
+ */
+export async function listSessions(userId: string): Promise<SessionDoc[]> {
+  const now = Date.now();
+  return read((db) =>
+    (Object.values(db.sessions) as unknown as SessionDoc[])
+      .filter(
+        (s) => s.userId === userId && new Date(s.expiresAt).getTime() >= now
+      )
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  );
 }
 
 export { nowIso };

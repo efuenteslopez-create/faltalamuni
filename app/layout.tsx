@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { AuthProvider } from "@/lib/flm/auth";
+import { SiteHeader } from "@/components/layout/SiteHeader";
+import { BottomNav } from "@/components/layout/BottomNav";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -51,7 +54,19 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ServiceWorkerRegister />
-        {children}
+        <AuthProvider>
+          <SiteHeader />
+          <div className="min-h-[70vh] pb-24 md:pb-10">{children}</div>
+          <footer className="hidden border-t border-flm-line md:block">
+            <div className="flm-container flex items-center justify-between py-6 text-sm text-flm-muted">
+              <p className="font-bold text-flm-ink">
+                Falta <span className="text-flm-accent">la Muni</span>
+              </p>
+              <p>Hecho con vecinos, para vecinos.</p>
+            </div>
+          </footer>
+          <BottomNav />
+        </AuthProvider>
       </body>
     </html>
   );
