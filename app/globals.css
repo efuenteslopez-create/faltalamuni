@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #faf7f1;
+  --foreground: #1c1917;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+/* Foco visible accesible (WCAG 2.2 AA) */
+:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respeto a movimiento reducido */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Utilidades FLM */
+@layer components {
+  .flm-container {
+    @apply mx-auto w-full max-w-app px-4 sm:px-6;
+  }
+  .flm-card {
+    @apply rounded-2xl bg-flm-surface shadow-card border border-flm-line;
+  }
+  .flm-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-flm-accent px-5 py-3 text-base font-semibold text-white shadow-card transition active:scale-[0.98] disabled:opacity-50 min-h-[48px];
+  }
+  .flm-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-flm-line bg-flm-surface px-5 py-3 text-base font-semibold text-flm-ink transition active:scale-[0.98] disabled:opacity-50 min-h-[48px];
+  }
+  .flm-input {
+    @apply w-full rounded-xl border border-flm-line bg-white px-4 py-3 text-base text-flm-ink placeholder:text-flm-muted min-h-[48px];
+  }
+  .flm-label {
+    @apply mb-1.5 block text-sm font-semibold text-flm-ink;
+  }
+  .flm-skeleton {
+    @apply animate-pulse rounded-xl bg-flm-line;
+  }
+}
