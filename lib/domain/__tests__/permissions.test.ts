@@ -158,6 +158,19 @@ describe("matriz de permisos (spec §13)", () => {
     ).toThrowError(expect.objectContaining({ code: "FORBIDDEN_TRANSITION" }));
   });
 
+  it("2b. admin y moderador no tienen la capacidad de verificar (iteración 1)", () => {
+    expect(hasCapability("PLATFORM_ADMIN", "report.verify")).toBe(false);
+    expect(hasCapability("INDEPENDENT_MODERATOR", "report.verify")).toBe(false);
+    for (const role of ["PLATFORM_ADMIN", "INDEPENDENT_MODERATOR"] as const) {
+      expect(() =>
+        assertTransition("AWAITING_VERIFICATION", "VERIFIED_RESOLVED", role)
+      ).toThrowError(expect.objectContaining({ code: "FORBIDDEN_TRANSITION" }));
+    }
+    // Solo ciudadanía conserva la capacidad.
+    expect(hasCapability("RESIDENT", "report.verify")).toBe(true);
+    expect(hasCapability("VERIFIED_RESIDENT", "report.verify")).toBe(true);
+  });
+
   it("3. el funcionario no opera fuera de su comuna", async () => {
     const w = await setupWorld();
     const dto = await createSample(w);

@@ -30,6 +30,9 @@ import {
   Municipality,
   PossibleDuplicate,
   ReportDto,
+  MunicipalAction,
+  Attribution,
+  MUNICIPAL_ACTION_LABELS,
 } from "@/lib/domain/entities";
 
 /** Lectura tipada dentro de una transacción/lectura. */
@@ -180,34 +183,146 @@ export function orgRef(
 }
 
 /**
- * Regla "Ya estuvo la Muni": true solo si el reporte está VERIFIED_RESOLVED
- * y hubo gestión municipal acreditada (statusEvents con actor perteneciente
- * a una organización MUNICIPALITY).
+ * Regla "Ya estuvo la Muni" (iteración 1, hallazgo 3).
+ *
+ * El sello se otorga SOLO cuando se cumplen las tres condiciones juntas:
+ * 1. El reporte está VERIFIED_RESOLVED.
+ * 2. Existe al menos una acción municipal acreditable causal.
+ * 3. La acción ocurrió a más tardar cuando se informó la solución
+ *    (evento SOLUTION_PROPOSED): la gestión debe ser causa, no decoración
+ *    posterior.
+ *
+ * NO otorgan crédito por sí solos: ACKNOWLEDGED, una respuesta pública, la
+ * mera existencia de managingOrgId, una asignación sin acción posterior ni
+ * una derivación sin seguimiento.
  */
 export function reportMunicipalCredit(db: Database, report: Report): boolean {
   if (report.state !== "VERIFIED_RESOLVED") return false;
-  const memberships = all<{ userId: string; organizationId: string }>(
-    db,
-    "memberships"
-  );
-  const orgOf = new Map(memberships.map((m) => [m.userId, m.organizationId]));
-  const municipalOrgIds = new Set(
-    all<Organization>(db, "organizations")
-      .filter((o) => o.kind === "MUNICIPALITY")
-      .map((o) => o.id)
-  );
-  // La org gestora del reporte también acredita gestión municipal.
-  if (report.managingOrgId && municipalOrgIds.has(report.managingOrgId)) {
-    return true;
-  }
-  const events = all<StatusEvent>(db, "statusEvents").filter(
-    (e) => e.reportId === report.id
-  );
-  return events.some((e) => {
-    if (!e.actorId) return false;
-    const orgId = orgOf.get(e.actorId);
-    return orgId !== undefined && municipalOrgIds.has(orgId);
+  return causalMunicipalActions(db, report).length > 0;
+}
+
+/** Marca temporal del primer evento SOLUTION_PROPOSED (solución informada). */
+function solutionInformedAt(db: Database, reportId: string): string | null {
+  const events = all<StatusEvent>(db, "statusEvents")
+    .filter((e) => e.reportId === reportId && e.to === "SOLUTION_PROPOSED")
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  return events[0]?.createdAt ?? null;
+}
+
+/**
+ * Acciones municipales acreditables causales: registradas por una
+ * municipalidad y con fecha no posterior a la solución informada.
+ */
+export function causalMunicipalActions(
+  db: Database,
+  report: Report
+): MunicipalAction[] {
+  const informedAt = solutionInformedAt(db, report.id);
+  if (!informedAt) return [];
+  return all<MunicipalAction>(db, "municipalActions")
+    .filter((a) => a.reportId === report.id && a.createdAt <= informedAt)
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+}
+
+function formatDateCl(iso: string): string {
+  return new Date(iso).toLocaleDateString("es-CL", {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
   });
+}
+
+/**
+ * Construye la explicación estructurada de atribución del reporte:
+ * responsable, gestor, ejecutor, verificación y detalle del crédito
+ * municipal. Es lo que la interfaz pública muestra para explicar por qué
+ * (o por qué no) la municipalidad recibió el reconocimiento.
+ */
+export function buildAttribution(db: Database, report: Report): Attribution {
+  const actions = causalMunicipalActions(db, report);
+  const granted = report.state === "VERIFIED_RESOLVED" && actions.length > 0;
+
+  // Cómo se verificó: auditoría de la resolución (o votos, para datos históricos).
+  let verification: Attribution["verification"] = null;
+  if (report.state === "VERIFIED_RESOLVED") {
+    const resolutionAudit = all<AuditEvent>(db, "auditEvents").find(
+      (e) => e.entityId === report.id && e.action === "report.verification_resolved"
+    );
+    const via = resolutionAudit?.detail?.["via"] as
+      | "author-plus-neighbor"
+      | "community"
+      | undefined;
+    const approvingVoterIds =
+      (resolutionAudit?.detail?.["approvingVoterIds"] as string[] | undefined) ??
+      [];
+    if (via) {
+      verification = {
+        mode: via,
+        approvers: approvingVoterIds.length,
+        at: resolutionAudit?.createdAt ?? null,
+      };
+    } else {
+      // Datos históricos (seed demo): derivar de los votos registrados.
+      const votes = all<{ reportId: string; voterId: string; approve: boolean }>(
+        db,
+        "verificationVotes"
+      ).filter((v) => v.reportId === report.id && v.approve);
+      const approvers = votes
+        .map((v) => v.voterId)
+        .filter((id, i, arr) => arr.indexOf(id) === i);
+      if (approvers.length > 0) {
+        verification = {
+          mode: approvers.includes(report.authorId)
+            ? "author-plus-neighbor"
+            : "community",
+          approvers: approvers.length,
+          at: null,
+        };
+      }
+    }
+  }
+
+  const users = new Map(
+    all<User>(db, "users").map((u) => [u.id, u.displayName])
+  );
+  const actionDtos = actions.map((a) => ({
+    type: a.type,
+    typeLabel: MUNICIPAL_ACTION_LABELS[a.type],
+    organizationName: orgRef(db, a.organizationId)?.name ?? "Municipalidad",
+    actorName: users.get(a.actorId) ?? "Funcionario/a",
+    at: a.createdAt,
+    publicDescription: a.publicDescription,
+  }));
+
+  const managingName = orgRef(db, report.managingOrgId)?.name;
+  let headline: string;
+  let explanation: string;
+  if (granted) {
+    const first = actionDtos[0];
+    headline = "Ya estuvo la Muni";
+    explanation =
+      `Ya estuvo la Muni: ${first.organizationName} — ` +
+      `${first.typeLabel.toLowerCase()} el ${formatDateCl(first.at)} ` +
+      `(${first.publicDescription}) y la solución fue verificada por la ciudadanía.`;
+  } else if (report.state === "VERIFIED_RESOLVED") {
+    headline = "Problema resuelto";
+    explanation =
+      "Problema resuelto: la solución fue verificada por la ciudadanía, " +
+      "pero no hay gestión municipal acreditable registrada" +
+      (managingName ? ` por ${managingName}` : "") +
+      ".";
+  } else {
+    headline = "";
+    explanation = "";
+  }
+
+  return {
+    responsible: orgRef(db, report.responsibleOrgId),
+    managing: orgRef(db, report.managingOrgId),
+    executor: orgRef(db, report.executorOrgId),
+    verification,
+    municipalCredit: { granted, headline, explanation, actions: actionDtos },
+  };
 }
 
 /** Construye el DTO público/privilegiado de un reporte. */
@@ -265,6 +380,7 @@ export function toReportDto(
     managingOrg: orgRef(db, report.managingOrgId),
     executorOrg: orgRef(db, report.executorOrgId),
     municipalCredit: reportMunicipalCredit(db, report),
+    attribution: buildAttribution(db, report),
     version: report.version,
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,

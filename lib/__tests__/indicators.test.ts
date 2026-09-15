@@ -19,6 +19,8 @@ interface FixtureEvent {
   reason?: string;
 }
 
+const FIXTURE_IDS = new Map<string, string>();
+
 async function fixtureReport(opts: {
   code: string;
   categoryId: string;
@@ -27,6 +29,7 @@ async function fixtureReport(opts: {
 }): Promise<void> {
   await transact((db) => {
     const id = newId();
+    FIXTURE_IDS.set(opts.code, id);
     const report: Report = {
       id,
       code: opts.code,
@@ -65,6 +68,29 @@ async function fixtureReport(opts: {
       db.statusEvents[sev.id] = sev as unknown as (typeof db.statusEvents)[string];
       prev = e.to;
     }
+  });
+}
+
+/** Acción municipal acreditable explícita (iteración 1). */
+async function fixtureAction(
+  code: string,
+  organizationId: string,
+  at: string
+): Promise<void> {
+  const reportId = FIXTURE_IDS.get(code);
+  if (!reportId) throw new Error(`reporte fixture ${code} no existe`);
+  await transact((db) => {
+    const id = newId();
+    db.municipalActions[id] = {
+      id,
+      reportId,
+      organizationId,
+      actorId: null,
+      type: "FIELD_WORK_RECORDED",
+      publicDescription: "Cuadrilla municipal realizó el trabajo.",
+      evidenceRef: null,
+      createdAt: at,
+    } as unknown as (typeof db.municipalActions)[string];
   });
 }
 
@@ -185,6 +211,9 @@ async function setupFixtures() {
       { to: "REFERRED", at: at(6), actorId: U2, reason: "Competencia externa" },
     ],
   });
+  // Iteración 1: el crédito ya no viene de eventos municipales — solo D
+  // tiene una acción acreditable causal (registrada antes de la solución).
+  await fixtureAction("D", "org-muni-i", at(10));
   await fixtureReport({
     code: "H", categoryId: "cat-a", state: "HIDDEN_BY_MODERATION",
     events: [

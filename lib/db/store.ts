@@ -35,6 +35,7 @@ export type CollectionName =
   | "resolutionEvidence"
   | "verificationRequests"
   | "verificationVotes"
+  | "municipalActions"
   | "reopenRequests"
   | "moderationCases"
   | "auditEvents"
@@ -68,6 +69,7 @@ const COLLECTIONS: CollectionName[] = [
   "resolutionEvidence",
   "verificationRequests",
   "verificationVotes",
+  "municipalActions",
   "reopenRequests",
   "moderationCases",
   "auditEvents",

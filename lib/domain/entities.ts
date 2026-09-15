@@ -122,7 +122,7 @@ export interface Referral {
   createdAt: string;
 }
 
-/** Voto de verificación ciudadana/independiente. El autor pesa doble. */
+/** Voto de verificación ciudadana/independiente. */
 export interface VerificationVote {
   id: string;
   reportId: string;
@@ -130,7 +130,11 @@ export interface VerificationVote {
   voterRole: string;
   approve: boolean;
   comment: string | null;
-  /** 2 si vota el autor, 1 en otro caso. */
+  /**
+   * Peso histórico: siempre 1 desde la iteración 1. El quórum ya no usa
+   * pesos; usa las reglas de verificación (lib/domain/verification.ts).
+   * Se conserva el campo por compatibilidad con datos existentes.
+   */
   weight: number;
   createdAt: string;
 }
@@ -152,6 +156,95 @@ export interface VerificationRequest {
   requestedBy: string | null;
   status: "open" | "resolved" | "reopened";
   createdAt: string;
+}
+
+/**
+ * Acción municipal acreditable (iteración 1, hallazgo 3).
+ *
+ * Reemplaza la regla anterior ("cualquier evento de un funcionario acredita
+ * gestión"). Solo estas acciones explícitas, registradas por una
+ * municipalidad con descripción pública y auditoría, pueden sustentar el
+ * sello "Ya estuvo la Muni". Reconocer la recepción, responder públicamente,
+ * asignar sin acción posterior o derivar sin seguimiento NO acreditan nada.
+ */
+export type MunicipalActionType =
+  | "EXTERNAL_COORDINATION_RECORDED"
+  | "REFERRAL_ACCEPTED_BY_AGENCY"
+  | "FIELD_WORK_RECORDED"
+  | "CONTRACTOR_ACTION_RECORDED"
+  | "SOLUTION_EVIDENCE_SUBMITTED"
+  | "FOLLOW_UP_RECORDED";
+
+export const MUNICIPAL_ACTION_TYPES: MunicipalActionType[] = [
+  "EXTERNAL_COORDINATION_RECORDED",
+  "REFERRAL_ACCEPTED_BY_AGENCY",
+  "FIELD_WORK_RECORDED",
+  "CONTRACTOR_ACTION_RECORDED",
+  "SOLUTION_EVIDENCE_SUBMITTED",
+  "FOLLOW_UP_RECORDED",
+];
+
+/** Etiquetas públicas en español de Chile. */
+export const MUNICIPAL_ACTION_LABELS: Record<MunicipalActionType, string> = {
+  EXTERNAL_COORDINATION_RECORDED: "Coordinación externa acreditada",
+  REFERRAL_ACCEPTED_BY_AGENCY: "Derivación aceptada por el organismo",
+  FIELD_WORK_RECORDED: "Trabajo en terreno registrado",
+  CONTRACTOR_ACTION_RECORDED: "Acción de contratista registrada",
+  SOLUTION_EVIDENCE_SUBMITTED: "Evidencia de solución presentada",
+  FOLLOW_UP_RECORDED: "Seguimiento registrado",
+};
+
+export interface MunicipalAction {
+  id: string;
+  reportId: string;
+  /** Organización municipal que registra la acción. */
+  organizationId: string;
+  /** Funcionario que la registra. */
+  actorId: string;
+  type: MunicipalActionType;
+  /** Descripción pública de lo realizado. */
+  publicDescription: string;
+  /** Referencia verificable (id de evidencia u otro) cuando corresponda. */
+  evidenceRef: string | null;
+  createdAt: string;
+}
+
+/**
+ * Explicación estructurada de la atribución de un reporte (iteración 1,
+ * hallazgo 3). El DTO público la incluye siempre: no es solo un booleano.
+ *
+ * - Responsable: organismo con competencia sobre el problema.
+ * - Gestor: institución que recibió, derivó e hizo seguimiento.
+ * - Ejecutor: quien realizó el trabajo.
+ * - Verificación: ciudadanía (vía autor+vecino o comunidad).
+ * - Crédito municipal: "Ya estuvo la Muni" solo con gestión acreditable
+ *   causal; si no, "Problema resuelto".
+ */
+export interface Attribution {
+  responsible: { id: string; name: string } | null;
+  managing: { id: string; name: string } | null;
+  executor: { id: string; name: string } | null;
+  verification: {
+    mode: "author-plus-neighbor" | "community";
+    /** Vecinos cuyas aprobaciones activaron la resolución. */
+    approvers: number;
+    at: string | null;
+  } | null;
+  municipalCredit: {
+    granted: boolean;
+    /** "Ya estuvo la Muni" | "Problema resuelto" */
+    headline: string;
+    /** Explicación pública del porqué (o porqué no) del reconocimiento. */
+    explanation: string;
+    actions: Array<{
+      type: MunicipalActionType;
+      typeLabel: string;
+      organizationName: string;
+      actorName: string;
+      at: string;
+      publicDescription: string;
+    }>;
+  };
 }
 
 /** DTO público de reporte. `location` exacta solo para actores con alcance. */
@@ -176,11 +269,17 @@ export interface ReportDto {
   managingOrg: { id: string; name: string } | null;
   executorOrg: { id: string; name: string } | null;
   /**
-   * Sello "Ya estuvo la Muni": true solo si VERIFIED_RESOLVED con gestión
-   * municipal acreditada (statusEvents con actor de org municipal).
-   * Si se resolvió sin gestión municipal → "Problema resuelto" (false).
+   * Sello "Ya estuvo la Muni": true solo si VERIFIED_RESOLVED con al menos
+   * una acción municipal acreditable causal (ver reportMunicipalCredit en
+   * lib/services/common.ts). Si se resolvió sin gestión municipal → false
+   * ("Problema resuelto").
    */
   municipalCredit: boolean;
+  /**
+   * Explicación estructurada de la atribución: responsable, gestor,
+   * ejecutor, verificación y detalle del crédito municipal.
+   */
+  attribution: Attribution;
   version: number;
   createdAt: string;
   updatedAt: string;

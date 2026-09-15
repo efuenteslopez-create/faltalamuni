@@ -24,7 +24,7 @@ Hoy el reclamo municipal típico entra por teléfono, correo o ventanilla: no ti
 2. **Acompañar**: otros vecinos confirman ("me pasa lo mismo") y siguen el caso; las confirmaciones alimentan la priorización.
 3. **Gestionar**: la municipalidad acusa recibo, clasifica, asigna a un departamento o deriva a un organismo externo. Todo cambio exige actor identificado y queda en la bitácora.
 4. **Informar solución**: la institución declara la solución **con evidencia** (foto/documento). Esto NO cierra el caso: lo deja en "solución informada".
-5. **Verificar**: se abre un período de verificación ciudadana. Con el quórum de vecinos independientes (`FLM_VERIFICATION_QUORUM`, default 3), el caso pasa a "solucionado verificado" y la comuna se anota el sello *"Ya estuvo la Muni"*. Si los vecinos no están conformes, el caso se **reabre con fundamento**.
+5. **Verificar**: se abre un período de verificación ciudadana. Al alcanzar el quórum (autor que aprueba + un vecino verificado, o tres vecinos verificados), el actor interno `SYSTEM` mueve el caso a "solucionado verificado" dentro de la misma transacción. El sello *"Ya estuvo la Muni"* solo aparece si hubo gestión municipal acreditable: acciones explícitas registradas por la municipalidad (coordinación externa, trabajo en terreno, acción de contratista, evidencia de solución, derivación aceptada o seguimiento) anteriores a la solución informada. Sin gestión acreditable, el caso verificado muestra *"Problema resuelto"*. Si los vecinos no están conformes, el caso se **reabre con fundamento**.
 6. **Moderar**: la moderación independiente puede rechazar (con fundamento público obligatorio) u ocultar contenido problemático. Las municipalidades no moderan.
 
 ## Alcance del MVP
@@ -32,7 +32,7 @@ Hoy el reclamo municipal típico entra por teléfono, correo o ventanilla: no ti
 - Reportes con foto, geolocalización y código público de seguimiento.
 - Máquina de estados de 13 estados con validación 100% en servidor.
 - Matriz de permisos por capacidades y alcance por comuna.
-- Verificación ciudadana con quórum configurable y reapertura.
+- Verificación ciudadana con quórum fijo (autor + vecino verificado, o tres vecinos verificados) y reapertura.
 - Moderación independiente separada de las instituciones.
 - Auditoría append-only de toda acción sensible.
 - PWA con modo offline (service worker; nunca cachea `/api`).

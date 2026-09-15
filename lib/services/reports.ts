@@ -7,10 +7,13 @@ import {
   DomainError,
   GeoPoint,
   Category,
+  Membership,
+  Organization,
   REPORT_STATE_LABELS,
   Report,
   ReportState,
   StatusEvent,
+  User,
 } from "@/lib/domain/types";
 import { haversineMeters, formatReportCode, approximatePublicLocation } from "@/lib/domain/geo";
 import {
@@ -21,10 +24,16 @@ import {
   isInstitutionalRole,
 } from "@/lib/domain/permissions";
 import {
+  evaluateVerificationQuorum,
+} from "@/lib/domain/verification";
+import {
   Confirmation,
   ExternalAgency,
   Follower,
   InstitutionalResponse,
+  MUNICIPAL_ACTION_TYPES,
+  MunicipalAction,
+  MunicipalActionType,
   Municipality,
   PossibleDuplicate,
   ReopenRequest,
@@ -57,23 +66,6 @@ const TERMINAL_STATES: ReportState[] = [
 ];
 
 const DUPLICATE_RADIUS_M = 100;
-
-/** Quorum de verificación ciudadana (env FLM_VERIFICATION_QUORUM, default 3). */
-export function verificationQuorum(): number {
-  const raw = process.env.FLM_VERIFICATION_QUORUM;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n >= 1 ? n : 3;
-}
-
-/** Roles que pueden votar una verificación (refleja la máquina de estados). */
-function canVoteVerification(role: string): boolean {
-  return (
-    role === "RESIDENT" ||
-    role === "VERIFIED_RESIDENT" ||
-    role === "INDEPENDENT_MODERATOR" ||
-    role === "PLATFORM_ADMIN"
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Creación y lectura
@@ -457,6 +449,17 @@ export async function transitionReport(
   input: TransitionInput
 ): Promise<ReportDto> {
   const a = requireActor(actor);
+  // Barrera anti-suplantación (iteración 1, hallazgo 1): ningún actor HTTP
+  // puede solicitar VERIFIED_RESOLVED. La resolución verificada solo la
+  // ejecuta el actor interno SYSTEM tras el quórum ciudadano (voteVerification).
+  // El actor de sesión jamás es SYSTEM (el tipo Actor solo admite Role), pero
+  // esta guarda explícita lo hace imposible incluso ante un bypass de tipos.
+  if (input.to === "VERIFIED_RESOLVED") {
+    throw new DomainError(
+      "FORBIDDEN",
+      "La resolución verificada solo la ejecuta el sistema tras el quórum ciudadano"
+    );
+  }
   await transact((db) => {
     const report = loadReportTx(db, code);
     checkVersion(report, input.expectedVersion);
@@ -515,16 +518,14 @@ export async function voteVerification(
 ): Promise<{
   report: ReportDto;
   votes: VerificationVote[];
-  quorum: number;
   resolved: boolean;
+  via: "author-plus-neighbor" | "community" | null;
 }> {
   const a = requireActor(actor);
-  if (!canVoteVerification(a.role)) {
-    throw new DomainError(
-      "FORBIDDEN",
-      `El rol ${a.role} no puede votar verificaciones`
-    );
-  }
+  // Elegibilidad: fuente única = matriz de capacidades. Solo RESIDENT y
+  // VERIFIED_RESIDENT tienen "report.verify". Moderación, administración y
+  // roles institucionales reciben FORBIDDEN (→ 403 en la API).
+  assertCapability(a.role, "report.verify");
   const comment = input.comment?.trim() ?? "";
 
   const result = await transact((db) => {
@@ -535,6 +536,36 @@ export async function voteVerification(
         "El reporte no está en verificación"
       );
     }
+
+    // Independencia: las cuentas vinculadas a la organización gestora o
+    // ejecutora no pueden votar como ciudadanía (conflicto de interés).
+    const managedOrgIds = new Set(
+      [report.managingOrgId, report.executorOrgId].filter(
+        (x): x is string => x !== null
+      )
+    );
+    const orgsByUser = new Map<string, Set<string>>();
+    for (const m of all<Membership>(db, "memberships")) {
+      if (!orgsByUser.has(m.userId)) orgsByUser.set(m.userId, new Set());
+      orgsByUser.get(m.userId)!.add(m.organizationId);
+    }
+    const isLinkedToManagedOrg = (userId: string): boolean => {
+      if (managedOrgIds.size === 0) return false;
+      const orgs = orgsByUser.get(userId);
+      if (!orgs) return false;
+      let linked = false;
+      orgs.forEach((o) => {
+        if (managedOrgIds.has(o)) linked = true;
+      });
+      return linked;
+    };
+    if (isLinkedToManagedOrg(a.id)) {
+      throw new DomainError(
+        "FORBIDDEN",
+        "Las cuentas vinculadas a la organización gestora o ejecutora no pueden votar como ciudadanía"
+      );
+    }
+
     const existing = all<VerificationVote>(db, "verificationVotes").filter(
       (v) => v.reportId === report.id
     );
@@ -543,7 +574,6 @@ export async function voteVerification(
     }
 
     const isAuthor = report.authorId === a.id;
-    const weight = isAuthor ? 2 : 1;
     const vote: VerificationVote = {
       id: newId(),
       reportId: report.id,
@@ -551,7 +581,7 @@ export async function voteVerification(
       voterRole: a.role,
       approve: input.approve,
       comment: comment ? comment : null,
-      weight,
+      weight: 1,
       createdAt: nowIso(),
     };
     put(db, "verificationVotes", vote);
@@ -560,94 +590,101 @@ export async function voteVerification(
       actorId: a.id,
       entityType: "report",
       entityId: report.id,
-      detail: { code, approve: input.approve, weight },
+      detail: { code, approve: input.approve },
     });
 
     let resolved = false;
+    let via: "author-plus-neighbor" | "community" | null = null;
+    const votes = [...existing, vote];
+
     if (!input.approve) {
-      // Solo el autor o la moderación independiente pueden reabrir con un rechazo.
-      if (isAuthor || a.role === "INDEPENDENT_MODERATOR") {
-        if (!comment) {
-          throw new DomainError(
-            "REASON_REQUIRED",
-            "Rechazar la solución requiere explicar el motivo"
-          );
-        }
-        put<ReopenRequest>(db, "reopenRequests", {
-          id: newId(),
-          reportId: report.id,
-          requestedBy: a.id,
-          reason: comment,
-          status: "accepted",
-          createdAt: nowIso(),
-        });
-        applyTransitionTx(db, report, {
-          to: "REOPENED",
-          actorId: a.id,
-          actorRole: a.role,
-          reason: comment,
-        });
-        auditTx(db, {
-          action: "report.transition",
-          actorId: a.id,
-          entityType: "report",
-          entityId: report.id,
-          detail: { code, to: "REOPENED", via: "verification_vote" },
-        });
+      // Solo el autor puede reabrir con un rechazo; exige fundamento.
+      // El disenso de otros vecinos queda registrado como opinión visible.
+      if (!isAuthor) {
+        return { votes, resolved, via };
       }
-      // El rechazo de otros ciudadanos queda registrado como disenso.
-    } else {
-      const quorum = verificationQuorum();
-      const approveWeight = existing
-        .filter((v) => v.approve)
-        .reduce((sum, v) => sum + v.weight, 0) + weight;
-      const moderatorApproves = a.role === "INDEPENDENT_MODERATOR";
-      if (moderatorApproves || approveWeight >= quorum) {
-        if (moderatorApproves) {
-          report.verifierId = a.id;
-        }
-        applyTransitionTx(db, report, {
-          to: "VERIFIED_RESOLVED",
-          actorId: a.id,
-          actorRole: a.role,
-          reason: null,
-        });
-        for (const vr of all<VerificationRequest>(db, "verificationRequests")) {
-          if (vr.reportId === report.id && vr.status === "open") {
-            vr.status = "resolved";
-          }
-        }
-        auditTx(db, {
-          action: "report.transition",
-          actorId: a.id,
-          entityType: "report",
-          entityId: report.id,
-          detail: {
-            code,
-            to: "VERIFIED_RESOLVED",
-            via: "verification_vote",
-            approveWeight,
-            quorum,
-          },
-        });
-        resolved = true;
+      if (!comment) {
+        throw new DomainError(
+          "REASON_REQUIRED",
+          "Rechazar la solución requiere explicar el motivo"
+        );
       }
+      put<ReopenRequest>(db, "reopenRequests", {
+        id: newId(),
+        reportId: report.id,
+        requestedBy: a.id,
+        reason: comment,
+        status: "accepted",
+        createdAt: nowIso(),
+      });
+      applyTransitionTx(db, report, {
+        to: "REOPENED",
+        actorId: a.id,
+        actorRole: a.role,
+        reason: comment,
+      });
+      auditTx(db, {
+        action: "report.transition",
+        actorId: a.id,
+        entityType: "report",
+        entityId: report.id,
+        detail: { code, to: "REOPENED", via: "verification_vote" },
+      });
+      return { votes, resolved, via };
     }
-    return {
-      votes: [...existing, vote],
-      resolved,
-      reportId: report.id,
-    };
+
+    // Aprobación: evaluar el quórum y, si se alcanza, transicionar a
+    // VERIFIED_RESOLVED con actor SYSTEM EN LA MISMA TRANSACCIÓN.
+    const users = new Map(all<User>(db, "users").map((u) => [u.id, u]));
+    const evaluation = evaluateVerificationQuorum(
+      report.authorId,
+      votes.map((v) => ({
+        voterId: v.voterId,
+        approve: v.approve,
+        verifiedResident: users.get(v.voterId)?.verifiedResident ?? false,
+        linkedToManagingOrg: isLinkedToManagedOrg(v.voterId),
+      }))
+    );
+
+    if (evaluation.resolved) {
+      resolved = true;
+      via = evaluation.via;
+      if (via === "author-plus-neighbor") {
+        report.verifierId = report.authorId;
+      }
+      applyTransitionTx(db, report, {
+        to: "VERIFIED_RESOLVED",
+        actorId: null, // sistema: nadie puede suplantarlo por HTTP
+        actorRole: "SYSTEM",
+        reason: null,
+      });
+      for (const vr of all<VerificationRequest>(db, "verificationRequests")) {
+        if (vr.reportId === report.id && vr.status === "open") {
+          vr.status = "resolved";
+        }
+      }
+      // La resolución registra los votos que activaron la decisión.
+      auditTx(db, {
+        action: "report.verification_resolved",
+        actorId: null,
+        entityType: "report",
+        entityId: report.id,
+        detail: {
+          code,
+          via,
+          approvingVoterIds: evaluation.approvingVoterIds,
+        },
+      });
+    }
+    return { votes, resolved, via };
   });
 
-  const dto = await read((db) =>
-    toReportDto(db, loadReportTx(db, code), a)
-  );
+  const dto = await read((db) => toReportDto(db, loadReportTx(db, code), a));
   return {
     report: dto,
     votes: result.votes,
-    quorum: verificationQuorum(),
     resolved: result.resolved,
+    via: result.via,
   };
 }
 
@@ -897,6 +934,80 @@ export async function referToAgency(
     });
   });
   return getReportByCode(code, a);
+}
+
+// ---------------------------------------------------------------------------
+// Acciones municipales acreditables (iteración 1, hallazgo 3)
+// ---------------------------------------------------------------------------
+
+export interface MunicipalActionInput {
+  type: MunicipalActionType;
+  publicDescription: string;
+  evidenceRef?: string;
+}
+
+/**
+ * Registra una acción municipal acreditable: el único mecanismo que puede
+ * sustentar el sello "Ya estuvo la Muni". Solo una organización de tipo
+ * MUNICIPALITY puede registrarlas; reconocer la recepción, responder
+ * públicamente, asignar o derivar sin seguimiento NO crean acciones.
+ */
+export async function recordMunicipalAction(
+  actor: Actor | null,
+  code: string,
+  input: MunicipalActionInput
+): Promise<MunicipalAction> {
+  const a = requireActor(actor);
+  assertCapability(a.role, "institutional.propose_solution");
+  const description = input.publicDescription.trim();
+  if (description.length < 5) {
+    throw new DomainError(
+      "VALIDATION",
+      "La descripción pública de la acción es muy corta"
+    );
+  }
+  if (!MUNICIPAL_ACTION_TYPES.includes(input.type)) {
+    throw new DomainError("VALIDATION", "Tipo de acción municipal inválido");
+  }
+  return transact((db) => {
+    const report = loadReportTx(db, code);
+    assertInstitutionalScope(a, report.municipalityId);
+    if (!a.organizationId) {
+      throw new DomainError("FORBIDDEN", "Sin organización asociada");
+    }
+    const org = get<Organization>(db, "organizations", a.organizationId);
+    if (!org || org.kind !== "MUNICIPALITY") {
+      throw new DomainError(
+        "FORBIDDEN",
+        "Solo una municipalidad puede registrar acciones municipales acreditables"
+      );
+    }
+    const action: MunicipalAction = {
+      id: newId(),
+      reportId: report.id,
+      organizationId: org.id,
+      actorId: a.id,
+      type: input.type,
+      publicDescription: description,
+      evidenceRef: input.evidenceRef?.trim() || null,
+      createdAt: nowIso(),
+    };
+    put(db, "municipalActions", action);
+    report.updatedAt = nowIso();
+    auditTx(db, {
+      action: "report.municipal_action",
+      actorId: a.id,
+      entityType: "report",
+      entityId: report.id,
+      detail: {
+        code,
+        type: input.type,
+        organizationId: org.id,
+        evidenceRef: action.evidenceRef,
+      },
+    });
+    return action;
+  });
 }
 
 // ---------------------------------------------------------------------------

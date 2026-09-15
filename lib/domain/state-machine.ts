@@ -2,9 +2,12 @@
  * FLM — Máquina de estados del reporte (spec §4).
  * Validación 100% en servidor. El cliente jamás decide transiciones.
  *
- * PRINCIPIO DE INDEPENDENCIA: ningún rol institucional (MUNICIPAL_AGENT,
- * MUNICIPAL_MANAGER, EXTERNAL_AGENCY_AGENT) puede ejecutar la transición a
- * VERIFIED_RESOLVED. La verificación final es siempre ciudadana/independiente.
+ * PRINCIPIO DE INDEPENDENCIA (iteración 1): la transición a VERIFIED_RESOLVED
+ * solo la ejecuta el actor interno SYSTEM, después de evaluar el quórum
+ * ciudadano (ver lib/domain/verification.ts) dentro de la misma transacción
+ * que registra el voto. NINGÚN rol humano —ni PLATFORM_ADMIN, ni
+ * INDEPENDENT_MODERATOR, ni ningún rol institucional— puede solicitarla por
+ * HTTP: el endpoint de transiciones la rechaza y el esquema Zod la excluye.
  */
 import { DomainError, ReportState, Role } from "./types";
 
@@ -46,8 +49,11 @@ export const TRANSITIONS: TransitionRule[] = [
   { from: "IN_PROGRESS", to: "SOLUTION_PROPOSED", allowed: ["MUNICIPAL_AGENT", "MUNICIPAL_MANAGER", "EXTERNAL_AGENCY_AGENT"], requiresReason: false, requiresEvidence: true },
   { from: "SOLUTION_PROPOSED", to: "AWAITING_VERIFICATION", allowed: ["MUNICIPAL_AGENT", "MUNICIPAL_MANAGER", "EXTERNAL_AGENCY_AGENT", "SYSTEM"], requiresReason: false },
 
-  // Verificación independiente — NUNCA un rol institucional
-  { from: "AWAITING_VERIFICATION", to: "VERIFIED_RESOLVED", allowed: ["RESIDENT", "VERIFIED_RESIDENT", "INDEPENDENT_MODERATOR", "PLATFORM_ADMIN"], requiresReason: false },
+  // Verificación independiente — SOLO el sistema, tras el quórum ciudadano.
+  // Ningún humano puede ejecutar AWAITING_VERIFICATION → VERIFIED_RESOLVED:
+  // es la garantía técnica de que nadie verifica unilateralmente.
+  { from: "AWAITING_VERIFICATION", to: "VERIFIED_RESOLVED", allowed: ["SYSTEM"], requiresReason: false },
+  // Rechazo con fundamento: el autor (vía voto) o la moderación reabren.
   { from: "AWAITING_VERIFICATION", to: "REOPENED", allowed: ["RESIDENT", "VERIFIED_RESIDENT", "INDEPENDENT_MODERATOR"], requiresReason: true },
 
   // Reapertura y re-clasificación

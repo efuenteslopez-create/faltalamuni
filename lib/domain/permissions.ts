@@ -10,7 +10,9 @@ export type Capability =
   | "report.create"
   | "report.confirm" // "Yo también vi este problema"
   | "report.follow"
-  | "report.verify" // votar/confirmar una solución (rol ciudadano o moderación)
+  | "report.verify" // votar una solución: SOLO ciudadanía (RESIDENT, VERIFIED_RESIDENT).
+  // Ni INDEPENDENT_MODERATOR ni PLATFORM_ADMIN votan: su poder es moderar
+  // contenido con fundamento, jamás aprobar soluciones (iteración 1).
   | "report.reopen"
   | "institutional.acknowledge"
   | "institutional.triage"
@@ -87,7 +89,6 @@ export const PERMISSION_MATRIX: Record<Role, Capability[]> = {
     "report.create",
     "report.confirm",
     "report.follow",
-    "report.verify",
     "report.reopen",
     "institutional.export",
     "moderation.hide",

@@ -9,7 +9,7 @@ Fuente de verdad en código: `lib/domain/permissions.ts` (`PERMISSION_MATRIX`, `
 | `report.create` | ✅ | ✅ | | | | ✅ | ✅ |
 | `report.confirm` ("yo también lo vi") | ✅ | ✅ | | | | ✅ | ✅ |
 | `report.follow` | ✅ | ✅ | | | | ✅ | ✅ |
-| `report.verify` (votar solución) | ✅ | ✅ | | | | | ✅ |
+| `report.verify` (votar solución) | ✅ | ✅ | | | | | |
 | `report.reopen` | ✅ | ✅ | | | | | ✅ |
 | `institutional.acknowledge` | | | ✅ | ✅ | ✅ | | |
 | `institutional.triage` | | | ✅ | ✅ | ✅ | | |
@@ -29,6 +29,7 @@ Fuente de verdad en código: `lib/domain/permissions.ts` (`PERMISSION_MATRIX`, `
 
 Notas:
 - `INDEPENDENT_MODERATOR` puede crear/confirmar reportes como vecina/o, pero **no** verifica soluciones (para no concentrar poder de moderación + verificación).
+- Desde la iteración 1, `PLATFORM_ADMIN` **tampoco** verifica soluciones ni transiciona a `VERIFIED_RESOLVED`: la verificación es exclusivamente ciudadana y la resolución la ejecuta el actor interno `SYSTEM` tras el quórum.
 - `EXTERNAL_AGENCY_AGENT` no asigna ni deriva: solo avanza lo que se le derivó.
 - `PLATFORM_ADMIN` no tiene capacidades institucionales operativas (no gestiona reportes) ni ve notas internas.
 

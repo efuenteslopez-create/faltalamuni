@@ -24,7 +24,6 @@ Variables en `.env.example` (sin valores reales):
 | `NEXT_PUBLIC_APP_URL` | URL pública de la app. |
 | `NEXT_PUBLIC_MAP_TILES_URL` / `NEXT_PUBLIC_MAP_ATTRIBUTION` | Tiles del mapa (MapLibre). |
 | `FLM_DEMO_MODE` | `true` = datos y usuarios demo etiquetados. En producción: `false`. |
-| `FLM_VERIFICATION_QUORUM` | Vecinos independientes para verificar una solución (default `3`). |
 | `FLM_SESSION_SLIDING` | `true` = expiración deslizante de sesiones (default `false`). |
 
 ## Migraciones

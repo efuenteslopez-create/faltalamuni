@@ -198,6 +198,48 @@ export function ReportDetail({ code }: { code: string }) {
                 <p className="mt-4 whitespace-pre-line text-flm-ink">{report.description}</p>
               )}
 
+              {/* Atribución: responsable, gestor, ejecutor, verificación y crédito */}
+              {report.state === "VERIFIED_RESOLVED" && report.attribution && (
+                <section aria-label="Atribución de la solución" className="mt-6 rounded-2xl border border-flm-line p-4">
+                  <h2 className="text-lg font-extrabold text-flm-ink">Atribución</h2>
+                  <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="font-bold text-flm-muted">Responsable</dt>
+                      <dd className="mt-0.5 font-medium text-flm-ink">
+                        {report.attribution.responsible?.name ?? "Por determinar"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-bold text-flm-muted">Gestor</dt>
+                      <dd className="mt-0.5 font-medium text-flm-ink">
+                        {report.attribution.managing?.name ?? "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-bold text-flm-muted">Ejecutor</dt>
+                      <dd className="mt-0.5 font-medium text-flm-ink">
+                        {report.attribution.executor?.name ?? "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-bold text-flm-muted">Verificación</dt>
+                      <dd className="mt-0.5 font-medium text-flm-ink">
+                        {report.attribution.verification
+                          ? `Ciudadanía (${report.attribution.verification.approvers} ${
+                              report.attribution.verification.approvers === 1 ? "aprobación" : "aprobaciones"
+                            })`
+                          : "Ciudadanía"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {report.attribution.municipalCredit.explanation && (
+                    <p className="mt-3 border-t border-flm-line pt-3 text-sm font-medium text-flm-ink">
+                      {report.attribution.municipalCredit.explanation}
+                    </p>
+                  )}
+                </section>
+              )}
+
               {/* Comparación antes / después */}
               {report.evidenceUrls.length > 0 && (
                 <section aria-label="Evidencia de la solución" className="mt-6">

@@ -76,18 +76,30 @@ describe("máquina de estados", () => {
     }
   });
 
-  it("la verificación es ciudadana o independiente", () => {
+  it("la verificación solo la ejecuta el sistema tras el quórum ciudadano", () => {
+    // Iteración 1: NINGÚN rol humano puede transicionar directo a
+    // VERIFIED_RESOLVED —ni ciudadanía, ni moderación, ni administración.
     for (const role of [
       "RESIDENT",
       "VERIFIED_RESIDENT",
       "INDEPENDENT_MODERATOR",
+      "PLATFORM_ADMIN",
+      "MUNICIPAL_AGENT",
+      "MUNICIPAL_MANAGER",
+      "EXTERNAL_AGENCY_AGENT",
     ] as const) {
       expect(
         codeOf(() =>
           assertTransition("AWAITING_VERIFICATION", "VERIFIED_RESOLVED", role)
         )
-      ).toBeNull();
+      ).toBe("FORBIDDEN_TRANSITION");
     }
+    // Solo el actor interno SYSTEM (quórum evaluado en la transacción del voto).
+    expect(
+      codeOf(() =>
+        assertTransition("AWAITING_VERIFICATION", "VERIFIED_RESOLVED", "SYSTEM")
+      )
+    ).toBeNull();
     // Reapertura exige fundamento
     expect(
       codeOf(() =>

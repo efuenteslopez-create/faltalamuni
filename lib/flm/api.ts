@@ -4,6 +4,7 @@
  * las llamadas fallan con ApiError y la UI muestra estados amables.
  */
 import type { GeoPoint, ReportState, Role } from "@/lib/domain/types";
+import type { Attribution } from "@/lib/domain/entities";
 
 /* ------------------------------------------------------------------ */
 /* Tipos del contrato                                                  */
@@ -50,6 +51,8 @@ export interface ReportDetail extends ReportListItem {
   timelineUrl: string;
   createdAt: string;
   updatedAt: string;
+  /** Explicación estructurada de la atribución (responsable/gestor/ejecutor/verificación/crédito). */
+  attribution: Attribution;
 }
 
 export interface TimelineEvent {

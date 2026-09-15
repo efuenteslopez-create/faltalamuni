@@ -30,6 +30,7 @@ import {
 } from "@/lib/domain/types";
 import {
   ExternalAgency,
+  MunicipalActionType,
   Municipality,
 } from "@/lib/domain/entities";
 
@@ -235,6 +236,40 @@ async function addVote(
       weight,
       createdAt: at,
     } as unknown as (typeof db.verificationVotes)[string];
+  });
+}
+
+/** Acción municipal acreditable (iteración 1): sustenta "Ya estuvo la Muni". */
+async function addMunicipalAction(
+  reportId: string,
+  organizationId: string,
+  actorId: string,
+  type: MunicipalActionType,
+  publicDescription: string,
+  at: string
+) {
+  await transact((db: Database) => {
+    const id = newId();
+    db.municipalActions[id] = {
+      id,
+      reportId,
+      organizationId,
+      actorId,
+      type,
+      publicDescription,
+      evidenceRef: null,
+      createdAt: at,
+    } as unknown as (typeof db.municipalActions)[string];
+    const auditId = newId();
+    db.auditEvents[auditId] = {
+      id: auditId,
+      action: "report.municipal_action",
+      actorId,
+      entityType: "report",
+      entityId: reportId,
+      detail: { type, organizationId },
+      createdAt: at,
+    } as unknown as (typeof db.auditEvents)[string];
   });
 }
 
@@ -576,6 +611,33 @@ async function main() {
   await addEvidenceMedia(r6.id, "DESPUÉS", "#1d6f42", "solution", ANA, daysAgo(10), "Bandejón limpio y con cierre perimetral.");
   await addVote(r6.id, CAMILA, "RESIDENT", true, "Pasé hoy y está limpio. ¡Gracias!", 2, daysAgo(4));
   await addVote(r6.id, JORGE, "VERIFIED_RESIDENT", true, "Confirmo: retiraron todo el escombro.", 1, daysAgo(3));
+  // Acción municipal acreditable ANTES de la solución informada (daysAgo(10)):
+  // es lo que sustenta el sello "Ya estuvo la Muni" (iteración 1).
+  await addMunicipalAction(
+    r6.id,
+    ORG_MUNI,
+    ANA,
+    "FIELD_WORK_RECORDED",
+    "Cuadrilla municipal retiró el basural e instaló cierre perimetral.",
+    daysAgo(12)
+  );
+  // Auditoría de la resolución por quórum ciudadano (vía A: autora + vecino verificado).
+  await transact((db: Database) => {
+    const id = newId();
+    db.auditEvents[id] = {
+      id,
+      action: "report.verification_resolved",
+      actorId: null,
+      entityType: "report",
+      entityId: r6.id,
+      detail: {
+        code: r6.code,
+        via: "author-plus-neighbor",
+        approvingVoterIds: [CAMILA, JORGE],
+      },
+      createdAt: daysAgo(3),
+    } as unknown as (typeof db.auditEvents)[string];
+  });
   await addVerificationRequest(r6.id, ANA, "resolved", daysAgo(10, 1));
   await addConfirmation(r6.id, JORGE, daysAgo(20));
   await addResponse(r6.id, ORG_MUNI, ANA, "response", "Retiro completado por cuadrilla municipal. Se instaló cierre perimetral.", daysAgo(10));

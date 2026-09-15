@@ -46,11 +46,15 @@ Derivados = reportes con al menos un evento hacia REFERRED.
 Mediana de tiempo de solución = mediana, en horas, entre el evento REPORTED
 y el evento que llevó a VERIFIED_RESOLVED, solo para reportes verificados.
 
-Sello "Ya estuvo la Muni" = reportes en VERIFIED_RESOLVED con gestión
-municipal acreditada: al menos un evento de estado ejecutado por un actor de
-una organización municipal, o la organización gestora del reporte es
-municipal. Los reportes verificados sin gestión municipal se cuentan como
-"Problema resuelto" (la comunidad lo resolvió sola).
+Sello "Ya estuvo la Muni" = reportes en VERIFIED_RESOLVED con al menos una
+acción municipal acreditable causal: una acción explícita registrada por la
+municipalidad (coordinación externa, trabajo en terreno, acción de
+contratista, evidencia de solución, derivación aceptada o seguimiento) con
+fecha no posterior a la solución informada. Reconocer la recepción,
+responder públicamente, asignar sin acción posterior o derivar sin
+seguimiento NO otorgan crédito. Los reportes verificados sin gestión
+municipal acreditable se cuentan como "Problema resuelto" (la comunidad lo
+resolvió sola).
 
 Por categoría: para cada categoría, total de reportes, % con respuesta y
 % verificada, con las mismas definiciones anteriores.

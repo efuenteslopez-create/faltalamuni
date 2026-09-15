@@ -16,6 +16,7 @@ import {
   listInternalNotes,
   assignDepartment,
   referToAgency,
+  recordMunicipalAction,
 } from "@/lib/services/reports";
 import { getInbox } from "@/lib/services/panel";
 import {
@@ -136,6 +137,11 @@ async function driveToVerification(w: World, code: string) {
   await transitionReport(w.ana, code, { to: "TRIAGED", expectedVersion: 2 });
   await assignDepartment(w.ana, code, { departmentId: w.deptId, expectedVersion: 3 });
   await transitionReport(w.ana, code, { to: "IN_PROGRESS", expectedVersion: 4 });
+  // Acción municipal acreditable (anterior a la solución informada).
+  await recordMunicipalAction(w.ana, code, {
+    type: "FIELD_WORK_RECORDED",
+    publicDescription: "Cuadrilla municipal realizó el retiro.",
+  });
   await addEvidence(w.ana, code, { dataUrl: PNG_1PX, kind: "solution", description: "Trabajo realizado" });
   await transitionReport(w.ana, code, { to: "SOLUTION_PROPOSED", expectedVersion: 5 });
   await transitionReport(w.ana, code, { to: "AWAITING_VERIFICATION", expectedVersion: 6 });
@@ -214,9 +220,11 @@ describe("recorridos del spec §19 (nivel servicios)", () => {
     const w = await setupWorld();
     const r = await createBasural(w, w.camila);
     await driveToVerification(w, r.code);
+    // Iteración 1: el servicio rechaza el intento antes de la máquina de
+    // estados — solo SYSTEM resuelve tras el quórum ciudadano.
     await expectCode(
       transitionReport(w.paula, r.code, { to: "VERIFIED_RESOLVED", expectedVersion: 7 }),
-      "FORBIDDEN_TRANSITION"
+      "FORBIDDEN"
     );
     const dto = await getReportByCode(r.code, w.camila);
     expect(dto.state).toBe("AWAITING_VERIFICATION");
@@ -226,18 +234,24 @@ describe("recorridos del spec §19 (nivel servicios)", () => {
     const w = await setupWorld();
     const r = await createBasural(w, w.camila);
     await driveToVerification(w, r.code);
-    // La autora vota y pesa doble, pero aún no hay quórum (2/3)
+    // La autora aprueba, pero sin un vecino verificado sigue pendiente (vía A).
     const v1 = await voteVerification(w.camila, r.code, { approve: true, comment: "Pasé y está limpio" });
     expect(v1.votes).toHaveLength(1);
-    expect(v1.votes[0].weight).toBe(2);
+    expect(v1.votes[0].weight).toBe(1);
     expect(v1.resolved).toBe(false);
+    expect(v1.via).toBeNull();
     expect(v1.report.state).toBe("AWAITING_VERIFICATION");
-    // Otro vecino confirma: 2+1=3 alcanza el quórum
+    // Vecino verificado confirma: autora + 1 verificado = quórum (vía A).
     const v2 = await voteVerification(w.jorge, r.code, { approve: true });
     expect(v2.resolved).toBe(true);
+    expect(v2.via).toBe("author-plus-neighbor");
     expect(v2.report.state).toBe("VERIFIED_RESOLVED");
-    // Gestión municipal acreditada → sello
+    // Gestión municipal acreditada → sello con explicación estructurada.
     expect(v2.report.municipalCredit).toBe(true);
+    expect(v2.report.attribution.municipalCredit.granted).toBe(true);
+    expect(v2.report.attribution.municipalCredit.headline).toBe("Ya estuvo la Muni");
+    expect(v2.report.attribution.municipalCredit.explanation).toContain("Ya estuvo la Muni");
+    expect(v2.report.attribution.verification?.mode).toBe("author-plus-neighbor");
   });
 
   it("7. la autora rechaza → se reabre", async () => {

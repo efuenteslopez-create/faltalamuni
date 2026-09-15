@@ -22,7 +22,6 @@ Ver `.env.example` (sin valores reales; copiar a `.env.local`):
 | `NEXT_PUBLIC_APP_URL` | URL pública (links compartidos, Open Graph). |
 | `NEXT_PUBLIC_MAP_TILES_URL` / `NEXT_PUBLIC_MAP_ATTRIBUTION` | Tiles MapLibre (XYZ/OSM o proveedor con key). |
 | `FLM_DEMO_MODE` | `true` activa datos/usuarios demo etiquetados. **En producción debe ser `false`.** |
-| `FLM_VERIFICATION_QUORUM` | Vecinos independientes para verificar una solución (default 3). |
 | `FLM_SESSION_SLIDING` | `true` activa expiración deslizante de sesiones (default `false`). |
 
 ## Futuro: Vercel + Supabase

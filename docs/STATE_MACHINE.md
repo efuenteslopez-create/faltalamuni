@@ -22,7 +22,7 @@ stateDiagram-v2
     REFERRED --> IN_PROGRESS : municipalidad / agencia
     IN_PROGRESS --> SOLUTION_PROPOSED : institución (con evidencia)
     SOLUTION_PROPOSED --> AWAITING_VERIFICATION : institución / SYSTEM
-    AWAITING_VERIFICATION --> VERIFIED_RESOLVED : ciudadanía / moderación
+    AWAITING_VERIFICATION --> VERIFIED_RESOLVED : SYSTEM (quórum ciudadano)
     AWAITING_VERIFICATION --> REOPENED : ciudadanía / moderación (con fundamento)
     VERIFIED_RESOLVED --> REOPENED : ciudadanía / moderación (con fundamento)
     REOPENED --> TRIAGED : municipalidad / moderación
@@ -48,7 +48,7 @@ stateDiagram-v2
 | REFERRED → IN_PROGRESS | MUNICIPAL_AGENT, MUNICIPAL_MANAGER, EXTERNAL_AGENCY_AGENT | No | No |
 | IN_PROGRESS → SOLUTION_PROPOSED | MUNICIPAL_AGENT, MUNICIPAL_MANAGER, EXTERNAL_AGENCY_AGENT | No | **Sí** (foto/documento) |
 | SOLUTION_PROPOSED → AWAITING_VERIFICATION | MUNICIPAL_AGENT, MUNICIPAL_MANAGER, EXTERNAL_AGENCY_AGENT, SYSTEM | No | No |
-| AWAITING_VERIFICATION → **VERIFIED_RESOLVED** | RESIDENT, VERIFIED_RESIDENT, INDEPENDENT_MODERATOR, PLATFORM_ADMIN | No | No |
+| AWAITING_VERIFICATION → **VERIFIED_RESOLVED** | **SYSTEM** (actor interno, solo tras quórum ciudadano) | No | No |
 | AWAITING_VERIFICATION → REOPENED | RESIDENT, VERIFIED_RESIDENT, INDEPENDENT_MODERATOR | **Sí** | No |
 | VERIFIED_RESOLVED → REOPENED | RESIDENT, VERIFIED_RESIDENT, INDEPENDENT_MODERATOR | **Sí** | No |
 | REOPENED → TRIAGED | MUNICIPAL_AGENT, MUNICIPAL_MANAGER, INDEPENDENT_MODERATOR | No | No |
@@ -56,13 +56,13 @@ stateDiagram-v2
 | Cualquier estado no terminal → HIDDEN_BY_MODERATION | INDEPENDENT_MODERATOR, PLATFORM_ADMIN | **Sí** | No |
 | HIDDEN_BY_MODERATION → REPORTED | INDEPENDENT_MODERATOR, PLATFORM_ADMIN | **Sí** | No |
 
-## Regla "techo institucional"
+## Regla "techo institucional" + "nadie verifica directo" (iteración 1)
 
-**Ningún rol institucional** (`MUNICIPAL_AGENT`, `MUNICIPAL_MANAGER`, `EXTERNAL_AGENCY_AGENT`) **puede ejecutar la transición a `VERIFIED_RESOLVED`.**
+**Ningún rol humano puede ejecutar la transición a `VERIFIED_RESOLVED`** — ni institucional (`MUNICIPAL_AGENT`, `MUNICIPAL_MANAGER`, `EXTERNAL_AGENCY_AGENT`), ni ciudadanía (`RESIDENT`, `VERIFIED_RESIDENT`), ni moderación independiente, ni `PLATFORM_ADMIN`.
 
-La institución llega hasta `SOLUTION_PROPOSED` ("informamos la solución, con evidencia") y el sistema la mueve a `AWAITING_VERIFICATION`. Desde ahí, solo ciudadanía (`RESIDENT`, `VERIFIED_RESIDENT`), moderación independiente o el admin de plataforma pueden declarar el caso verificado — y la ciudadanía puede reabrirlo con fundamento si la solución no fue real.
+La institución llega hasta `SOLUTION_PROPOSED` ("informamos la solución, con evidencia") y el sistema la mueve a `AWAITING_VERIFICATION`. Desde ahí, la ciudadanía vota: cuando se alcanza el quórum (ver `lib/domain/verification.ts` — vía A: autor + un vecino verificado; vía B: tres vecinos verificados), el **actor interno `SYSTEM`** ejecuta la transición dentro de la misma transacción del voto que completa el quórum. La ciudadanía puede reabrir el caso con fundamento si la solución no fue real.
 
-Esto está codificado en `TRANSITIONS` (`lib/domain/state-machine.ts`), no en documentación: cualquier intento institucional de auto-verificación retorna `FORBIDDEN_TRANSITION`.
+Esto está codificado en `TRANSITIONS` (`lib/domain/state-machine.ts`) y reforzado en `transitionReport` (`lib/services/reports.ts`), que rechaza explícitamente cualquier intento HTTP de solicitar `VERIFIED_RESOLVED`, y en el esquema Zod, que ni siquiera acepta ese estado.
 
 ## Reglas transversales
 

@@ -55,3 +55,11 @@ La matriz de permisos (dominio) no le da `report.verify` al moderador: quien mod
 
 ## D18. Quórum de verificación configurable por entorno
 `FLM_VERIFICATION_QUORUM` (default 3) en vez de constante hardcodeada: comunas chicas y grandes necesitan quórums distintos, y el piloto de 90 días puede requerir ajustarlo sin deploy de código.
+
+## D19. Iteración 1: verificación independiente y crédito municipal causal (supersede D17/D18)
+
+Auditoría del núcleo de confianza encontró tres hallazgos y se corrigieron así:
+
+1. **Nadie verifica directo.** `AWAITING_VERIFICATION → VERIFIED_RESOLVED` solo la ejecuta el actor interno `SYSTEM` dentro de la transacción del voto que completa el quórum. Se eliminó `report.verify` de `PLATFORM_ADMIN` (D17 queda supersedida: el admin ya no es "respaldo operativo" de verificación). El esquema Zod de `/transitions` excluye `VERIFIED_RESOLVED` y el servicio la rechaza explícitamente con `FORBIDDEN` (defensa en profundidad, HTTP 403).
+2. **Quórum ciudadano real.** Nueva función pura `evaluateVerificationQuorum` (`lib/domain/verification.ts`): vía A = autor que aprueba + al menos un `VERIFIED_RESIDENT` distinto; vía B = al menos tres `VERIFIED_RESIDENT` distintos. Residentes no verificados no cuentan; el autor pesa 1 como todos (se elimina el peso 2); cuentas vinculadas a la organización gestora/ejecutora no votan; la resolución queda auditada (`report.verification_resolved` con `via` y `approvingVoterIds`). D18 queda supersedida: `FLM_VERIFICATION_QUORUM` se retira de `.env.example`, `README.md`, `docs/DEPLOYMENT.md` y del código (no se leía en ningún lado); el quórum es fijo por regla, no configurable por entorno.
+3. **Crédito municipal causal.** Nueva entidad `MunicipalAction` (`lib/domain/entities.ts`): solo organizaciones `kind === "MUNICIPALITY"` pueden registrar acciones acreditables (`POST /api/reports/[code]/municipal-actions`). El sello "Ya estuvo la Muni" exige: estado `VERIFIED_RESOLVED` + acción acreditable con `createdAt` anterior o igual al `SOLUTION_PROPOSED`. Reconocer, responder, asignar o derivar sin seguimiento NO generan crédito; verificado sin gestión muestra "Problema resuelto". El DTO público expone `attribution` estructurado (responsable, gestor, ejecutor, verificación, crédito con titular y explicación).

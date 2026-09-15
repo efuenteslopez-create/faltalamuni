@@ -4,10 +4,10 @@ FLM se juega su credibilidad en una promesa: **la municipalidad es contraparte, 
 
 ## Garantías técnicas de independencia
 
-1. **Techo institucional en la máquina de estados** — ningún rol institucional puede transicionar a `VERIFIED_RESOLVED` (`lib/domain/state-machine.ts`). Intentarlo retorna `FORBIDDEN_TRANSITION`.
+1. **Techo institucional en la máquina de estados** — ningún rol humano puede transicionar a `VERIFIED_RESOLVED`: solo el actor interno `SYSTEM` tras el quórum ciudadano (`lib/domain/state-machine.ts`). Intentarlo retorna `FORBIDDEN`/`FORBIDDEN_TRANSITION` (HTTP 403).
 2. **Inmutabilidad del reporte original** — `canEditOriginalReport()` retorna `false` para todos los roles (`lib/domain/permissions.ts`). La institución solo agrega respuestas y evidencia en entidades separadas.
 3. **Moderación separada** — solo `INDEPENDENT_MODERATOR` y `PLATFORM_ADMIN` pueden rechazar/ocultar/restaurar, siempre con fundamento público obligatorio (`requiresReason`). Las municipalidades no tienen capacidades de moderación.
-4. **Verificación ciudadana** — el quórum de vecinos independientes (`FLM_VERIFICATION_QUORUM`) es el que cierra un caso, y cualquier vecina puede reabrirlo con fundamento.
+4. **Verificación ciudadana** — el quórum de vecinos (`lib/domain/verification.ts`: autor + un vecino verificado, o tres vecinos verificados) es el que cierra un caso; ningún rol humano —ni admin, ni moderador, ni funcionario— puede verificar directamente. Cualquier vecina puede reabrirlo con fundamento.
 5. **Notas internas blindadas** — `canReadInternalNotes` excluye incluso al `PLATFORM_ADMIN` de leer notas internas de una organización ajena.
 6. **Auditoría append-only** — `lib/audit.ts`: toda acción sensible genera un evento que no se puede borrar ni editar. Si alguien intenta algo indebido, queda registrado quién, cuándo y qué.
 7. **Alcance por comuna** — `inScope()`: un funcionario no cruza a otra comuna; el admin global no gestiona reportes.

@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 import { REPORT_STATES, ROLES } from "@/lib/domain/types";
+import { MUNICIPAL_ACTION_TYPES } from "@/lib/domain/entities";
 
 export const uuidSchema = z.string().uuid();
 
@@ -31,8 +32,18 @@ export const reportCreateSchema = z.object({
   idempotencyKey: uuidSchema.optional(),
 });
 
+/**
+ * Estados que un actor HTTP puede solicitar en /transitions.
+ * VERIFIED_RESOLVED está excluido a propósito: solo el actor interno SYSTEM
+ * la ejecuta tras el quórum ciudadano (iteración 1). El servicio además la
+ * rechaza explícitamente como defensa en profundidad.
+ */
+const HTTP_REQUESTABLE_STATES = (REPORT_STATES.filter(
+  (s) => s !== "VERIFIED_RESOLVED"
+) as [string, ...string[]]);
+
 export const reportTransitionSchema = z.object({
-  to: z.enum(REPORT_STATES as [string, ...string[]]),
+  to: z.enum(HTTP_REQUESTABLE_STATES),
   reason: z.string().trim().max(2000).optional(),
   expectedVersion: z.number().int().min(1),
   idempotencyKey: uuidSchema.optional(),
@@ -113,6 +124,14 @@ export const referralSchema = z.object({
   agencyId: idSchema,
   reason: z.string().trim().min(5).max(2000),
   expectedVersion: z.number().int().min(1),
+  idempotencyKey: uuidSchema.optional(),
+});
+
+/** POST /api/reports/[code]/municipal-actions — acción municipal acreditable. */
+export const municipalActionSchema = z.object({
+  type: z.enum(MUNICIPAL_ACTION_TYPES as [string, ...string[]]),
+  publicDescription: z.string().trim().min(5).max(2000),
+  evidenceRef: z.string().trim().max(500).optional(),
   idempotencyKey: uuidSchema.optional(),
 });
 

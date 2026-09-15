@@ -52,7 +52,9 @@ erDiagram
 
 **StatusEvent** — `{ reportId, from, to, actorId (null = sistema), reason, idempotencyKey, createdAt }`. Fuente histórica real del estado.
 
-**VerificationVote / VerificationRequest** — votos ciudadanos sobre una solución informada; el quórum (`FLM_VERIFICATION_QUORUM`) decide el paso a `VERIFIED_RESOLVED`.
+**VerificationVote / VerificationRequest** — votos ciudadanos sobre una solución informada; el quórum fijo (`lib/domain/verification.ts`) decide el paso a `VERIFIED_RESOLVED`, ejecutado por el actor interno `SYSTEM`. Peso siempre 1; un solo voto nunca resuelve.
+
+**MunicipalAction** — `{ reportId, organizationId (kind MUNICIPALITY), actorId, type, publicDescription, evidenceRef, createdAt }`. Acción municipal acreditable: la única fuente del sello "Ya estuvo la Muni". Tipos: `EXTERNAL_COORDINATION_RECORDED`, `REFERRAL_ACCEPTED_BY_AGENCY`, `FIELD_WORK_RECORDED`, `CONTRACTOR_ACTION_RECORDED`, `SOLUTION_EVIDENCE_SUBMITTED`, `FOLLOW_UP_RECORDED`. Solo es causal si ocurrió antes o a la vez que se informó la solución.
 
 **ModerationCase** — caso de moderación independiente con fundamento público obligatorio.
 
