@@ -147,6 +147,17 @@ export interface AuthContext {
 export async function getAuth(): Promise<AuthContext | null> {
   const cookieStore = cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
+  return getAuthFromToken(token ?? null);
+}
+
+/**
+ * Núcleo de validación de sesión a partir de un token explícito. Permite
+ * resolver el actor desde un Request concreto (tests de integración de los
+ * handlers reales) sin depender del contexto `next/headers`.
+ */
+export async function getAuthFromToken(
+  token: string | null
+): Promise<AuthContext | null> {
   if (!token) return null;
   const sessionId = parseToken(token);
   if (!sessionId) return null;

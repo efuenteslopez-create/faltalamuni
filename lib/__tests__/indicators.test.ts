@@ -71,15 +71,37 @@ async function fixtureReport(opts: {
   });
 }
 
-/** Acción municipal acreditable explícita (iteración 1). */
+/** Acción municipal acreditable explícita (iteración 1): con respaldo
+ *  verificable (evidencia de solución del mismo reporte) y su ronda de
+ *  verificación resuelta. Solo así otorga el sello "Ya estuvo la Muni". */
 async function fixtureAction(
   code: string,
   organizationId: string,
-  at: string
+  actionAt: string
 ): Promise<void> {
   const reportId = FIXTURE_IDS.get(code);
   if (!reportId) throw new Error(`reporte fixture ${code} no existe`);
   await transact((db) => {
+    const mediaId = newId();
+    db.reportMedia[mediaId] = {
+      id: mediaId,
+      reportId,
+      dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+      mimeType: "image/png",
+      sizeBytes: 16,
+      kind: "solution",
+      uploadedBy: "fixture",
+      createdAt: actionAt,
+    } as unknown as (typeof db.reportMedia)[string];
+    const evId = newId();
+    db.resolutionEvidence[evId] = {
+      id: evId,
+      reportId,
+      mediaId,
+      description: "Bandejón limpio tras el retiro.",
+      uploadedBy: "fixture",
+      createdAt: actionAt,
+    } as unknown as (typeof db.resolutionEvidence)[string];
     const id = newId();
     db.municipalActions[id] = {
       id,
@@ -88,9 +110,22 @@ async function fixtureAction(
       actorId: null,
       type: "FIELD_WORK_RECORDED",
       publicDescription: "Cuadrilla municipal realizó el trabajo.",
-      evidenceRef: null,
-      createdAt: at,
+      evidenceRef: evId,
+      accredited: true,
+      createdAt: actionAt,
     } as unknown as (typeof db.municipalActions)[string];
+    // Ronda resuelta de D: la propuesta de solución at(24) originó la ronda;
+    // la acción at(10) queda estrictamente dentro del ciclo causal.
+    const roundId = newId();
+    db.verificationRequests[roundId] = {
+      id: roundId,
+      reportId,
+      requestedBy: null,
+      status: "resolved",
+      solutionProposedAt: at(24),
+      cycleStartAt: null,
+      createdAt: at(24),
+    } as unknown as (typeof db.verificationRequests)[string];
   });
 }
 

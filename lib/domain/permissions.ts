@@ -23,6 +23,7 @@ export type Capability =
   | "institutional.request_verification"
   | "institutional.internal_notes" // leer/escribir notas internas (separadas)
   | "institutional.respond_public"
+  | "institutional.respond_referral" // la agencia receptora responde/acepta una derivación
   | "institutional.export"
   | "institutional.manage_members"
   | "moderation.hide"
@@ -76,6 +77,7 @@ export const PERMISSION_MATRIX: Record<Role, Capability[]> = {
     "institutional.progress",
     "institutional.propose_solution",
     "institutional.respond_public",
+    "institutional.respond_referral",
   ],
   INDEPENDENT_MODERATOR: [
     "report.create",

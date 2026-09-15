@@ -36,6 +36,8 @@ export type CollectionName =
   | "verificationRequests"
   | "verificationVotes"
   | "municipalActions"
+  | "publicReferences"
+  | "referralAcceptances"
   | "reopenRequests"
   | "moderationCases"
   | "auditEvents"
@@ -70,6 +72,8 @@ const COLLECTIONS: CollectionName[] = [
   "verificationRequests",
   "verificationVotes",
   "municipalActions",
+  "publicReferences",
+  "referralAcceptances",
   "reopenRequests",
   "moderationCases",
   "auditEvents",

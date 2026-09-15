@@ -27,12 +27,19 @@ import { Actor, inScope, isInstitutionalRole } from "@/lib/domain/permissions";
 import {
   Confirmation,
   Follower,
+  MunicipalActionBacking,
   Municipality,
   PossibleDuplicate,
+  PublicReference,
+  Referral,
+  ReferralAcceptance,
   ReportDto,
+  ReportMedia,
+  ResolutionEvidence,
   MunicipalAction,
   Attribution,
   MUNICIPAL_ACTION_LABELS,
+  VerificationRequest,
 } from "@/lib/domain/entities";
 
 /** Lectura tipada dentro de una transacción/lectura. */
@@ -183,14 +190,20 @@ export function orgRef(
 }
 
 /**
- * Regla "Ya estuvo la Muni" (iteración 1, hallazgo 3).
+ * Regla "Ya estuvo la Muni" (iteración 1, causalidad por ciclo).
  *
  * El sello se otorga SOLO cuando se cumplen las tres condiciones juntas:
  * 1. El reporte está VERIFIED_RESOLVED.
- * 2. Existe al menos una acción municipal acreditable causal.
- * 3. La acción ocurrió a más tardar cuando se informó la solución
- *    (evento SOLUTION_PROPOSED): la gestión debe ser causa, no decoración
- *    posterior.
+ * 2. La ronda de verificación que produjo la resolución tiene una
+ *    propuesta de solución identificable.
+ * 3. Existe al menos una acción municipal acreditada (con respaldo
+ *    verificable validado) dentro del ciclo causal de ESA ronda:
+ *    posterior a la última reapertura (si existe) y ESTRICTAMENTE anterior
+ *    a la propuesta de solución de la ronda
+ *    (cycleStartAt < action.createdAt < solutionProposedAt).
+ *
+ * Una acción con el mismo timestamp que la propuesta, posterior a ella, o
+ * perteneciente a un ciclo anterior (solución rechazada) NO otorga crédito.
  *
  * NO otorgan crédito por sí solos: ACKNOWLEDGED, una respuesta pública, la
  * mera existencia de managingOrgId, una asignación sin acción posterior ni
@@ -201,26 +214,94 @@ export function reportMunicipalCredit(db: Database, report: Report): boolean {
   return causalMunicipalActions(db, report).length > 0;
 }
 
-/** Marca temporal del primer evento SOLUTION_PROPOSED (solución informada). */
-function solutionInformedAt(db: Database, reportId: string): string | null {
-  const events = all<StatusEvent>(db, "statusEvents")
-    .filter((e) => e.reportId === reportId && e.to === "SOLUTION_PROPOSED")
-    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-  return events[0]?.createdAt ?? null;
+/**
+ * La ronda de verificación que produjo VERIFIED_RESOLVED: la ronda cerrada
+ * como "resolved" más reciente del reporte.
+ */
+export function resolvingRound(
+  db: Database,
+  reportId: string
+): VerificationRequest | null {
+  const rounds = all<VerificationRequest>(db, "verificationRequests")
+    .filter((vr) => vr.reportId === reportId && vr.status === "resolved")
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return rounds[0] ?? null;
 }
 
 /**
- * Acciones municipales acreditables causales: registradas por una
- * municipalidad y con fecha no posterior a la solución informada.
+ * Resuelve el respaldo público de una acción municipal a su forma
+ * presentable. Solo usa campos públicos: jamás expone notas internas.
+ */
+export function resolveActionBacking(
+  db: Database,
+  action: MunicipalAction
+): MunicipalActionBacking | null {
+  if (!action.evidenceRef) return null;
+  const ref = action.evidenceRef;
+  const evidence = get<ResolutionEvidence>(db, "resolutionEvidence", ref);
+  if (evidence && evidence.reportId === action.reportId) {
+    const media = get<ReportMedia>(db, "reportMedia", evidence.mediaId);
+    return {
+      kind: "resolution-evidence",
+      label: "Evidencia de solución",
+      reference:
+        media?.kind === "solution"
+          ? "Registro fotográfico de la solución"
+          : "Evidencia registrada",
+      summary: evidence.description,
+    };
+  }
+  const acceptance = get<ReferralAcceptance>(db, "referralAcceptances", ref);
+  if (acceptance && acceptance.reportId === action.reportId) {
+    const agency = get<{ name: string }>(
+      db,
+      "externalAgencies",
+      acceptance.agencyId
+    );
+    return {
+      kind: "referral-acceptance",
+      label: "Aceptación de derivación",
+      reference: `Respuesta de ${agency?.name ?? "la agencia"}`,
+      summary: acceptance.message,
+    };
+  }
+  const pub = get<PublicReference>(db, "publicReferences", ref);
+  if (pub && pub.reportId === action.reportId) {
+    const kindLabel =
+      pub.kind === "document"
+        ? "Documento oficial"
+        : pub.kind === "url"
+          ? "Publicación oficial"
+          : "Registro oficial";
+    return {
+      kind: "public-reference",
+      label: kindLabel,
+      reference: pub.reference,
+      summary: pub.summary,
+    };
+  }
+  return null;
+}
+
+/**
+ * Acciones municipales acreditables causales para la resolución vigente:
+ * acreditadas, del mismo reporte, dentro del ciclo causal de la ronda que
+ * resolvió (estrictamente posteriores a la última reapertura y
+ * estrictamente anteriores a la propuesta de solución de esa ronda).
  */
 export function causalMunicipalActions(
   db: Database,
   report: Report
 ): MunicipalAction[] {
-  const informedAt = solutionInformedAt(db, report.id);
-  if (!informedAt) return [];
+  const round = resolvingRound(db, report.id);
+  if (!round || !round.solutionProposedAt) return [];
+  const cycleStart = round.cycleStartAt;
+  const solutionAt = round.solutionProposedAt;
   return all<MunicipalAction>(db, "municipalActions")
-    .filter((a) => a.reportId === report.id && a.createdAt <= informedAt)
+    .filter((a) => a.reportId === report.id)
+    .filter((a) => a.accredited)
+    .filter((a) => cycleStart == null || a.createdAt > cycleStart)
+    .filter((a) => a.createdAt < solutionAt)
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 }
 
@@ -292,6 +373,8 @@ export function buildAttribution(db: Database, report: Report): Attribution {
     actorName: users.get(a.actorId) ?? "Funcionario/a",
     at: a.createdAt,
     publicDescription: a.publicDescription,
+    accredited: a.accredited,
+    backing: resolveActionBacking(db, a),
   }));
 
   const managingName = orgRef(db, report.managingOrgId)?.name;

@@ -31,11 +31,16 @@ import {
   ExternalAgency,
   Follower,
   InstitutionalResponse,
+  MUNICIPAL_ACTION_LABELS,
   MUNICIPAL_ACTION_TYPES,
   MunicipalAction,
   MunicipalActionType,
   Municipality,
   PossibleDuplicate,
+  PublicReference,
+  PublicReferenceKind,
+  Referral,
+  ReferralAcceptance,
   ReopenRequest,
   ReportDto,
   ReportMedia,
@@ -52,8 +57,10 @@ import {
   checkVersion,
   get,
   loadReportTx,
+  orgRef,
   put,
   requireActor,
+  resolveActionBacking,
   toReportDto,
 } from "./common";
 import { validateImageDataUrl } from "./media";
@@ -476,11 +483,38 @@ export async function transitionReport(
       hasEvidence,
     });
     if (input.to === "AWAITING_VERIFICATION") {
+      // Rondas de verificación (iteración 1): cada entrada crea UNA ronda
+      // nueva y nunca puede haber más de una abierta por reporte.
+      const openRounds = all<VerificationRequest>(db, "verificationRequests").filter(
+        (vr) => vr.reportId === report.id && vr.status === "open"
+      );
+      if (openRounds.length > 0) {
+        throw new DomainError(
+          "VERIFICATION_ROUND_OPEN",
+          "Ya existe una ronda de verificación abierta para este reporte"
+        );
+      }
+      // Ciclo causal de la ronda: la SOLUTION_PROPOSED que la origina y la
+      // última REOPENED anterior (si existe). La consulta corre DESPUÉS de
+      // aplicar la transición, pero filtra por `to`, así que el evento
+      // recién creado (AWAITING_VERIFICATION) no interfiere.
+      const solutionProposedAt =
+        all<StatusEvent>(db, "statusEvents")
+          .filter((e) => e.reportId === report.id && e.to === "SOLUTION_PROPOSED")
+          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0]?.createdAt ??
+        null;
+      const cycleStartAt =
+        all<StatusEvent>(db, "statusEvents")
+          .filter((e) => e.reportId === report.id && e.to === "REOPENED")
+          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0]?.createdAt ??
+        null;
       put<VerificationRequest>(db, "verificationRequests", {
         id: newId(),
         reportId: report.id,
         requestedBy: a.id,
         status: "open",
+        solutionProposedAt,
+        cycleStartAt,
         createdAt: nowIso(),
       });
     }
@@ -566,17 +600,42 @@ export async function voteVerification(
       );
     }
 
+    // Rondas de verificación (iteración 1): el voto pertenece a LA única
+    // ronda abierta, no al reporte. El quórum se evalúa solo con votos de
+    // esa ronda y la unicidad es voterId + verificationRequestId: quien votó
+    // en una ronda anterior puede votar de nuevo en una ronda nueva.
+    const openRounds = all<VerificationRequest>(db, "verificationRequests").filter(
+      (vr) => vr.reportId === report.id && vr.status === "open"
+    );
+    if (openRounds.length === 0) {
+      throw new DomainError(
+        "NO_OPEN_VERIFICATION_ROUND",
+        "No hay una ronda de verificación abierta para este reporte"
+      );
+    }
+    if (openRounds.length > 1) {
+      throw new DomainError(
+        "MULTIPLE_OPEN_ROUNDS",
+        "Integridad comprometida: más de una ronda de verificación abierta"
+      );
+    }
+    const round = openRounds[0];
+
     const existing = all<VerificationVote>(db, "verificationVotes").filter(
-      (v) => v.reportId === report.id
+      (v) => v.verificationRequestId === round.id
     );
     if (existing.some((v) => v.voterId === a.id)) {
-      throw new DomainError("DUPLICATE_VOTE", "Ya votaste en esta verificación");
+      throw new DomainError(
+        "DUPLICATE_VOTE",
+        "Ya votaste en esta ronda de verificación"
+      );
     }
 
     const isAuthor = report.authorId === a.id;
     const vote: VerificationVote = {
       id: newId(),
       reportId: report.id,
+      verificationRequestId: round.id,
       voterId: a.id,
       voterRole: a.role,
       approve: input.approve,
@@ -590,7 +649,7 @@ export async function voteVerification(
       actorId: a.id,
       entityType: "report",
       entityId: report.id,
-      detail: { code, approve: input.approve },
+      detail: { code, approve: input.approve, verificationRequestId: round.id },
     });
 
     let resolved = false;
@@ -617,6 +676,11 @@ export async function voteVerification(
         status: "accepted",
         createdAt: nowIso(),
       });
+      // La ronda se cierra atómicamente con el rechazo (igual que en la
+      // resolución SYSTEM): una ronda cerrada jamás recibe más votos ni
+      // puede volver a resolverse.
+      round.status = "reopened";
+      put<VerificationRequest>(db, "verificationRequests", round);
       applyTransitionTx(db, report, {
         to: "REOPENED",
         actorId: a.id,
@@ -937,8 +1001,125 @@ export async function referToAgency(
 }
 
 // ---------------------------------------------------------------------------
-// Acciones municipales acreditables (iteración 1, hallazgo 3)
+// Acciones municipales acreditables (iteración 1: respaldo verificable +
+// causalidad por ciclo)
 // ---------------------------------------------------------------------------
+
+/** Tipos que exigen una ResolutionEvidence del mismo reporte. */
+const EVIDENCE_BACKED_TYPES: MunicipalActionType[] = [
+  "FIELD_WORK_RECORDED",
+  "CONTRACTOR_ACTION_RECORDED",
+  "SOLUTION_EVIDENCE_SUBMITTED",
+];
+/** Tipos que exigen una PublicReference modelada y validada del mismo reporte. */
+const REFERENCE_BACKED_TYPES: MunicipalActionType[] = [
+  "EXTERNAL_COORDINATION_RECORDED",
+  "FOLLOW_UP_RECORDED",
+];
+
+/**
+ * La organización que registra debe ser una municipalidad verificada y, o
+ * bien la gestora del reporte, o bien la municipalidad de la comuna del
+ * reporte. Una afirmación institucional sin este anclaje no acredita nada.
+ */
+function assertMunicipalActionOrg(
+  db: Parameters<typeof get>[0],
+  org: Organization,
+  report: Report
+): void {
+  if (!org.verified) {
+    throw new DomainError(
+      "FORBIDDEN",
+      "La organización no está verificada como municipalidad"
+    );
+  }
+  const isManaging = report.managingOrgId !== null && org.id === report.managingOrgId;
+  const isComunaMunicipality =
+    org.municipalityId !== null && org.municipalityId === report.municipalityId;
+  if (!isManaging && !isComunaMunicipality) {
+    throw new DomainError(
+      "FORBIDDEN",
+      "La organización no es la gestora del reporte ni la municipalidad de la comuna"
+    );
+  }
+}
+
+/**
+ * Valida el respaldo verificable de una acción municipal. `evidenceRef` no
+ * puede ser un string arbitrario: debe referenciar un registro existente
+ * del MISMO reporte, del tipo que corresponda a la acción.
+ */
+function validateActionBacking(
+  db: Parameters<typeof get>[0],
+  report: Report,
+  type: MunicipalActionType,
+  evidenceRef: string | undefined
+): string {
+  const ref = evidenceRef?.trim() || null;
+  if (!ref) {
+    throw new DomainError(
+      "BACKING_REQUIRED",
+      `La acción ${type} requiere un respaldo verificable: no basta la descripción`
+    );
+  }
+  if (EVIDENCE_BACKED_TYPES.includes(type)) {
+    const ev = get<ResolutionEvidence>(db, "resolutionEvidence", ref);
+    if (!ev) {
+      throw new DomainError("BACKING_NOT_FOUND", "La evidencia indicada no existe");
+    }
+    if (ev.reportId !== report.id) {
+      throw new DomainError(
+        "BACKING_MISMATCH",
+        "La evidencia pertenece a otro reporte"
+      );
+    }
+    return ref;
+  }
+  if (type === "REFERRAL_ACCEPTED_BY_AGENCY") {
+    const acc = get<ReferralAcceptance>(db, "referralAcceptances", ref);
+    if (!acc) {
+      throw new DomainError(
+        "BACKING_NOT_FOUND",
+        "La aceptación de derivación indicada no existe"
+      );
+    }
+    if (acc.reportId !== report.id) {
+      throw new DomainError(
+        "BACKING_MISMATCH",
+        "La aceptación pertenece a otro reporte"
+      );
+    }
+    const referral = get<Referral>(db, "referrals", acc.referralId);
+    if (!referral || referral.reportId !== report.id) {
+      throw new DomainError(
+        "BACKING_MISMATCH",
+        "La aceptación no corresponde a una derivación de este reporte"
+      );
+    }
+    if (!acc.accepted) {
+      throw new DomainError(
+        "INVALID_BACKING",
+        "La agencia no aceptó la derivación: no acredita gestión"
+      );
+    }
+    return ref;
+  }
+  // EXTERNAL_COORDINATION_RECORDED / FOLLOW_UP_RECORDED
+  const pub = get<PublicReference>(db, "publicReferences", ref);
+  if (!pub) {
+    throw new DomainError(
+      "BACKING_NOT_FOUND",
+      "La referencia pública indicada no existe"
+    );
+  }
+  if (pub.reportId !== report.id) {
+    throw new DomainError(
+      "BACKING_MISMATCH",
+      "La referencia pertenece a otro reporte"
+    );
+  }
+  return ref;
+}
 
 export interface MunicipalActionInput {
   type: MunicipalActionType;
@@ -948,9 +1129,12 @@ export interface MunicipalActionInput {
 
 /**
  * Registra una acción municipal acreditable: el único mecanismo que puede
- * sustentar el sello "Ya estuvo la Muni". Solo una organización de tipo
- * MUNICIPALITY puede registrarlas; reconocer la recepción, responder
- * públicamente, asignar o derivar sin seguimiento NO crean acciones.
+ * sustentar el sello "Ya estuvo la Muni".
+ *
+ * Una acción es una afirmación institucional: solo otorga crédito si trae
+ * respaldo público verificable validado (evidenceRef existente del mismo
+ * reporte). Sin respaldo válido se rechaza: una municipalidad no puede
+ * concederse el sello con una declaración sin respaldo.
  */
 export async function recordMunicipalAction(
   actor: Actor | null,
@@ -982,6 +1166,8 @@ export async function recordMunicipalAction(
         "Solo una municipalidad puede registrar acciones municipales acreditables"
       );
     }
+    assertMunicipalActionOrg(db, org, report);
+    const backingRef = validateActionBacking(db, report, input.type, input.evidenceRef);
     const action: MunicipalAction = {
       id: newId(),
       reportId: report.id,
@@ -989,7 +1175,8 @@ export async function recordMunicipalAction(
       actorId: a.id,
       type: input.type,
       publicDescription: description,
-      evidenceRef: input.evidenceRef?.trim() || null,
+      evidenceRef: backingRef,
+      accredited: true,
       createdAt: nowIso(),
     };
     put(db, "municipalActions", action);
@@ -1004,9 +1191,178 @@ export async function recordMunicipalAction(
         type: input.type,
         organizationId: org.id,
         evidenceRef: action.evidenceRef,
+        accredited: true,
       },
     });
     return action;
+  });
+}
+
+export interface PublicReferenceInput {
+  kind: PublicReferenceKind;
+  reference: string;
+  summary: string;
+}
+
+/**
+ * Registra una referencia pública verificable (documento oficial, registro
+ * o URL pública) que puede respaldar acciones de coordinación y
+ * seguimiento. La referencia es modelada y validada: no es texto libre.
+ */
+export async function registerPublicReference(
+  actor: Actor | null,
+  code: string,
+  input: PublicReferenceInput
+): Promise<PublicReference> {
+  const a = requireActor(actor);
+  assertCapability(a.role, "institutional.propose_solution");
+  const kinds: PublicReferenceKind[] = ["document", "url", "registry"];
+  if (!kinds.includes(input.kind)) {
+    throw new DomainError("VALIDATION", "Tipo de referencia inválido");
+  }
+  const reference = input.reference.trim();
+  if (input.kind === "url") {
+    let valid = false;
+    try {
+      const u = new URL(reference);
+      valid = u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      throw new DomainError(
+        "VALIDATION",
+        "La referencia debe ser una URL pública válida (http/https)"
+      );
+    }
+  } else if (reference.length < 3) {
+    throw new DomainError(
+      "VALIDATION",
+      "La referencia del documento o registro es muy corta"
+    );
+  }
+  const summary = input.summary.trim();
+  if (summary.length < 5) {
+    throw new DomainError(
+      "VALIDATION",
+      "El resumen de la referencia es muy corto"
+    );
+  }
+  return transact((db) => {
+    const report = loadReportTx(db, code);
+    assertInstitutionalScope(a, report.municipalityId);
+    if (!a.organizationId) {
+      throw new DomainError("FORBIDDEN", "Sin organización asociada");
+    }
+    const org = get<Organization>(db, "organizations", a.organizationId);
+    if (!org || org.kind !== "MUNICIPALITY") {
+      throw new DomainError(
+        "FORBIDDEN",
+        "Solo una municipalidad puede registrar referencias públicas"
+      );
+    }
+    assertMunicipalActionOrg(db, org, report);
+    const ref: PublicReference = {
+      id: newId(),
+      reportId: report.id,
+      kind: input.kind,
+      reference,
+      summary,
+      organizationId: org.id,
+      actorId: a.id,
+      createdAt: nowIso(),
+    };
+    put(db, "publicReferences", ref);
+    auditTx(db, {
+      action: "report.public_reference",
+      actorId: a.id,
+      entityType: "report",
+      entityId: report.id,
+      detail: { code, kind: input.kind, reference },
+    });
+    return ref;
+  });
+}
+
+export interface ReferralAcceptanceInput {
+  referralId: string;
+  accepted: boolean;
+  message: string;
+}
+
+/**
+ * La agencia receptora registra su aceptación o respuesta a una
+ * derivación. Es el respaldo que permite acreditar
+ * REFERRAL_ACCEPTED_BY_AGENCY: lo emite la agencia, no la municipalidad.
+ */
+export async function recordReferralAcceptance(
+  actor: Actor | null,
+  code: string,
+  input: ReferralAcceptanceInput
+): Promise<ReferralAcceptance> {
+  const a = requireActor(actor);
+  assertCapability(a.role, "institutional.respond_referral");
+  const message = input.message.trim();
+  if (message.length < 5) {
+    throw new DomainError(
+      "VALIDATION",
+      "La respuesta de la agencia es muy corta"
+    );
+  }
+  return transact((db) => {
+    const report = loadReportTx(db, code);
+    assertInstitutionalScope(a, report.municipalityId);
+    const referral = get<Referral>(db, "referrals", input.referralId);
+    if (!referral || referral.reportId !== report.id) {
+      throw new DomainError(
+        "REFERRAL_NOT_FOUND",
+        "Derivación no encontrada en este reporte"
+      );
+    }
+    const agency = get<ExternalAgency>(db, "externalAgencies", referral.agencyId);
+    if (!agency) {
+      throw new DomainError("AGENCY_NOT_FOUND", "Agencia externa no encontrada");
+    }
+    if (!a.organizationId || a.organizationId !== agency.organizationId) {
+      throw new DomainError(
+        "FORBIDDEN",
+        "Solo la agencia receptora puede responder su derivación"
+      );
+    }
+    const already = all<ReferralAcceptance>(db, "referralAcceptances").some(
+      (x) => x.referralId === referral.id
+    );
+    if (already) {
+      throw new DomainError(
+        "ALREADY_ANSWERED",
+        "Esta derivación ya tiene una respuesta registrada"
+      );
+    }
+    const acceptance: ReferralAcceptance = {
+      id: newId(),
+      reportId: report.id,
+      referralId: referral.id,
+      agencyId: agency.id,
+      organizationId: agency.organizationId,
+      actorId: a.id,
+      accepted: input.accepted,
+      message,
+      createdAt: nowIso(),
+    };
+    put(db, "referralAcceptances", acceptance);
+    auditTx(db, {
+      action: "report.referral_acceptance",
+      actorId: a.id,
+      entityType: "report",
+      entityId: report.id,
+      detail: {
+        code,
+        referralId: referral.id,
+        agencyId: agency.id,
+        accepted: input.accepted,
+      },
+    });
+    return acceptance;
   });
 }
 
@@ -1082,6 +1438,25 @@ export async function getTimeline(
         weight: v.weight,
         comment: v.comment,
         voterDisplay: users.get(v.voterId) ?? "Vecino/a",
+      });
+    }
+
+    // Acciones municipales con su respaldo público verificable. Solo campos
+    // públicos: jamás se exponen notas internas en el timeline.
+    for (const ma of all<MunicipalAction>(db, "municipalActions").filter(
+      (x) => x.reportId === report.id
+    )) {
+      const org = get<{ name: string }>(db, "organizations", ma.organizationId);
+      items.push({
+        type: "municipal-action",
+        at: ma.createdAt,
+        actionType: ma.type,
+        typeLabel: MUNICIPAL_ACTION_LABELS[ma.type],
+        organizationName: org?.name ?? "Municipalidad",
+        actorName: users.get(ma.actorId) ?? "Funcionario/a",
+        publicDescription: ma.publicDescription,
+        accredited: ma.accredited,
+        backing: resolveActionBacking(db, ma),
       });
     }
 

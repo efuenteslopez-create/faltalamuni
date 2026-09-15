@@ -39,7 +39,10 @@ import {
   assignDepartment,
   referToAgency,
   recordMunicipalAction,
+  registerPublicReference,
+  recordReferralAcceptance,
   getReportByCode,
+  getTimeline,
 } from "@/lib/services/reports";
 import { evaluateVerificationQuorum } from "@/lib/domain/verification";
 import { hasCapability } from "@/lib/domain/permissions";
@@ -436,11 +439,28 @@ describe("hallazgo 3: crédito municipal causal", () => {
     await transitionReport(w.ana, r.code, { to: "TRIAGED", expectedVersion: 2 });
     await assignDepartment(w.ana, r.code, { departmentId: w.deptId, expectedVersion: 3 });
     await transitionReport(w.ana, r.code, { to: "IN_PROGRESS", expectedVersion: 4 });
+    // Respaldo verificable modelado: la coordinación con la eléctrica queda
+    // registrada como referencia pública (documento oficial), no como una
+    // mera descripción del funcionario.
+    const ref = await registerPublicReference(w.paula, r.code, {
+      kind: "document",
+      reference: "OF-2026-1842",
+      summary: "Oficio de coordinación con la empresa eléctrica para el retiro.",
+    });
     const action = await recordMunicipalAction(w.paula, r.code, {
       type: "EXTERNAL_COORDINATION_RECORDED",
       publicDescription: "La municipalidad coordinó con la empresa eléctrica el retiro.",
+      evidenceRef: ref.id,
     });
     expect(action.type).toBe("EXTERNAL_COORDINATION_RECORDED");
+    expect(action.accredited).toBe(true);
+    // Determinista: la acción queda estrictamente antes de la propuesta.
+    await transact((db) => {
+      const stored = db.municipalActions[action.id] as unknown as {
+        createdAt: string;
+      };
+      stored.createdAt = new Date(Date.now() - 5_000).toISOString();
+    });
     await addEvidence(w.ana, r.code, { dataUrl: PNG_1PX, kind: "solution" });
     await transitionReport(w.ana, r.code, { to: "SOLUTION_PROPOSED", expectedVersion: 5 });
     await transitionReport(w.ana, r.code, { to: "AWAITING_VERIFICATION", expectedVersion: 6 });
@@ -453,23 +473,69 @@ describe("hallazgo 3: crédito municipal causal", () => {
     expect(credit.explanation).toContain("Muni Pudahuel");
     expect(credit.actions).toHaveLength(1);
     expect(credit.actions[0].typeLabel).toBe("Coordinación externa acreditada");
+    // El DTO público expone el estado de acreditación y el respaldo.
+    expect(credit.actions[0].accredited).toBe(true);
+    expect(credit.actions[0].backing).not.toBeNull();
+    expect(credit.actions[0].backing?.kind).toBe("public-reference");
+    expect(credit.actions[0].backing?.reference).toBe("OF-2026-1842");
   });
 
   it("una acción posterior a la solución informada no es causal", async () => {
     const w = await setupWorld();
     const r = await createBasural(w);
     await driveToVerificationBare(w, r.code);
-    // La acción se registra cuando la solución ya estaba informada: la
-    // marcamos con un timestamp explícitamente posterior (una hora después).
+    // Respaldo válido (referencia pública del mismo reporte) pero acción
+    // registrada cuando la solución ya estaba informada: la marcamos con
+    // un timestamp explícitamente posterior (una hora después).
+    const ref = await registerPublicReference(w.ana, r.code, {
+      kind: "registry",
+      reference: "FIS-2026-077",
+      summary: "Acta de fiscalización posterior.",
+    });
     const action = await recordMunicipalAction(w.ana, r.code, {
       type: "FOLLOW_UP_RECORDED",
       publicDescription: "Visita posterior de fiscalización.",
+      evidenceRef: ref.id,
     });
     await transact((db) => {
       const stored = db.municipalActions[action.id] as unknown as {
         createdAt: string;
       };
       stored.createdAt = new Date(Date.now() + 3_600_000).toISOString();
+    });
+    const v = await resolveViaA(w, r.code);
+    expect(v.report.municipalCredit).toBe(false);
+    expect(v.report.attribution.municipalCredit.headline).toBe("Problema resuelto");
+  });
+
+  it("una acción con el mismo timestamp que la solución no es causal (< estricto)", async () => {
+    const w = await setupWorld();
+    const r = await createBasural(w);
+    await driveToVerificationBare(w, r.code);
+    const ref = await registerPublicReference(w.ana, r.code, {
+      kind: "registry",
+      reference: "FIS-2026-078",
+      summary: "Acta de fiscalización.",
+    });
+    const action = await recordMunicipalAction(w.ana, r.code, {
+      type: "FOLLOW_UP_RECORDED",
+      publicDescription: "Visita de fiscalización.",
+      evidenceRef: ref.id,
+    });
+    // Igualar el timestamp al SOLUTION_PROPOSED de la ronda vigente.
+    await transact((db) => {
+      const report = Object.values(db.reports).find(
+        (x) => (x as unknown as { code: string }).code === r.code
+      ) as unknown as { id: string };
+      const round = Object.values(db.verificationRequests).find(
+        (x) =>
+          (x as unknown as { reportId: string }).reportId === report.id &&
+          (x as unknown as { status: string }).status === "open"
+      ) as unknown as { solutionProposedAt: string };
+      const stored = db.municipalActions[action.id] as unknown as {
+        createdAt: string;
+      };
+      stored.createdAt = round.solutionProposedAt;
     });
     const v = await resolveViaA(w, r.code);
     expect(v.report.municipalCredit).toBe(false);

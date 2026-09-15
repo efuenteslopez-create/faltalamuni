@@ -126,6 +126,13 @@ export interface Referral {
 export interface VerificationVote {
   id: string;
   reportId: string;
+  /**
+   * Ronda (VerificationRequest) a la que pertenece el voto. Los votos NO
+   * pertenecen al reporte: pertenecen a una ronda. El quórum se evalúa solo
+   * con los votos de la ronda abierta y la unicidad es
+   * voterId + verificationRequestId (iteración 1, rondas).
+   */
+  verificationRequestId: string;
   voterId: string;
   voterRole: string;
   approve: boolean;
@@ -155,6 +162,16 @@ export interface VerificationRequest {
   reportId: string;
   requestedBy: string | null;
   status: "open" | "resolved" | "reopened";
+  /**
+   * Ciclo causal de la ronda (iteración 1, hallazgo "causalidad por ciclo"):
+   * la propuesta de solución (SOLUTION_PROPOSED) que originó esta ronda y
+   * el inicio del ciclo (última REOPENED anterior, si existe). Solo las
+   * acciones municipales acreditables con
+   * cycleStartAt < createdAt < solutionProposedAt pueden sustentar el sello
+   * "Ya estuvo la Muni" para la resolución de ESTA ronda.
+   */
+  solutionProposedAt: string | null;
+  cycleStartAt: string | null;
   createdAt: string;
 }
 
@@ -204,9 +221,74 @@ export interface MunicipalAction {
   type: MunicipalActionType;
   /** Descripción pública de lo realizado. */
   publicDescription: string;
-  /** Referencia verificable (id de evidencia u otro) cuando corresponda. */
+  /**
+   * Referencia verificable obligatoria: id de un respaldo existente del
+   * MISMO reporte (ResolutionEvidence, ReferralAcceptance o PublicReference
+   * según el tipo de acción). Un string arbitrario no es respaldo válido.
+   */
   evidenceRef: string | null;
+  /**
+   * Estado de acreditación (iteración 1, hallazgo "respaldo verificable"):
+   * true solo si el respaldo fue validado al registrar la acción. Solo las
+   * acciones acreditadas pueden sustentar el sello "Ya estuvo la Muni".
+   * El endpoint rechaza el respaldo inválido; este campo protege además
+   * datos históricos sin respaldo (accredited=false → nunca otorgan crédito).
+   */
+  accredited: boolean;
   createdAt: string;
+}
+
+/**
+ * Respaldo público verificable (iteración 1, hallazgo "respaldo
+ * verificable"): referencia modelada y validada que sustenta las acciones
+ * EXTERNAL_COORDINATION_RECORDED y FOLLOW_UP_RECORDED. No basta la
+ * descripción escrita por el funcionario: la referencia debe ser
+ * comprobable (documento oficial, registro o URL pública).
+ */
+export type PublicReferenceKind = "document" | "url" | "registry";
+
+export interface PublicReference {
+  id: string;
+  reportId: string;
+  kind: PublicReferenceKind;
+  /** Folio/número de documento, código de registro oficial o URL completa. */
+  reference: string;
+  /** Qué acredita esta referencia (público). */
+  summary: string;
+  organizationId: string;
+  actorId: string;
+  createdAt: string;
+}
+
+/**
+ * Aceptación o respuesta de una agencia externa a una derivación
+ * (iteración 1, hallazgo "respaldo verificable"): mínimo dominio necesario
+ * para que REFERRAL_ACCEPTED_BY_AGENCY pueda acreditarse. La registra la
+ * agencia receptora, no la municipalidad.
+ */
+export interface ReferralAcceptance {
+  id: string;
+  reportId: string;
+  referralId: string;
+  agencyId: string;
+  /** Organización de la agencia que responde. */
+  organizationId: string;
+  actorId: string;
+  accepted: boolean;
+  /** Respuesta registrada por la agencia (pública). */
+  message: string;
+  createdAt: string;
+}
+
+/** Respaldo público resuelto para mostrar en el DTO y el timeline. */
+export interface MunicipalActionBacking {
+  kind: "resolution-evidence" | "referral-acceptance" | "public-reference";
+  /** Etiqueta legible, ej. "Evidencia de solución". */
+  label: string;
+  /** Referencia legible, ej. folio, URL o "evidencia fotográfica". */
+  reference: string;
+  /** Resumen público del respaldo. */
+  summary: string | null;
 }
 
 /**
@@ -243,6 +325,10 @@ export interface Attribution {
       actorName: string;
       at: string;
       publicDescription: string;
+      /** Estado de acreditación (siempre true en acciones causales). */
+      accredited: boolean;
+      /** Respaldo público verificable de la acción. */
+      backing: MunicipalActionBacking | null;
     }>;
   };
 }
@@ -319,4 +405,16 @@ export type TimelineItem =
       weight: number;
       comment: string | null;
       voterDisplay: string;
+    }
+  | {
+      type: "municipal-action";
+      at: string;
+      actionType: MunicipalActionType;
+      typeLabel: string;
+      organizationName: string;
+      actorName: string;
+      publicDescription: string;
+      accredited: boolean;
+      /** Respaldo público verificable; nunca notas internas. */
+      backing: MunicipalActionBacking | null;
     };

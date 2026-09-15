@@ -19,10 +19,27 @@ export async function POST(
   { params }: { params: { code: string } }
 ) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`transition:${actor.id}`, 30, 60_000);
     if (rl) return rl;
     const body = await req.json();
+    // Barrera HTTP explícita (iteración 1, hallazgo 4): ningún actor
+    // autenticado puede solicitar VERIFIED_RESOLVED. Se responde 403 aquí,
+    // ANTES de que el esquema Zod rechace el valor con 400: no es un valor
+    // "desconocido" sino una intención prohibida. El servicio mantiene su
+    // propia barrera (defensa en profundidad) y el actor jamás puede ser
+    // SYSTEM: el rol proviene de la sesión, no del JSON.
+    if (
+      body !== null &&
+      typeof body === "object" &&
+      (body as { to?: unknown }).to === "VERIFIED_RESOLVED"
+    ) {
+      return fail(
+        "FORBIDDEN",
+        "La resolución verificada solo la ejecuta el sistema tras el quórum ciudadano",
+        403
+      );
+    }
     const parsed = reportTransitionSchema.safeParse(body);
     if (!parsed.success) {
       return fail("VALIDATION", formatZodError(parsed.error), 400);

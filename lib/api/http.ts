@@ -3,8 +3,8 @@
  * Los handlers son wrappers delgados: parsean cookies→actor, validan Zod,
  * chequean rate limit + idempotencia, llaman al servicio y mapean errores.
  */
-import { NextResponse } from "next/server";
-import { getAuth } from "@/lib/auth/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, getAuth, getAuthFromToken } from "@/lib/auth/auth";
 import { buildActor } from "@/lib/auth/actor";
 import { Actor } from "@/lib/domain/permissions";
 import { DomainError } from "@/lib/domain/types";
@@ -35,9 +35,15 @@ const STATUS_BY_CODE: Record<string, number> = {
   MUNICIPALITY_NOT_FOUND: 404,
   DEPARTMENT_NOT_FOUND: 404,
   AGENCY_NOT_FOUND: 404,
+  REFERRAL_NOT_FOUND: 404,
   USER_NOT_FOUND: 404,
   NOT_FOLLOWING: 404,
   VALIDATION: 400,
+  BACKING_REQUIRED: 400,
+  BACKING_NOT_FOUND: 400,
+  BACKING_MISMATCH: 400,
+  INVALID_BACKING: 400,
+  NO_OPEN_VERIFICATION_ROUND: 400,
   INVALID_TRANSITION: 400,
   REASON_REQUIRED: 400,
   EVIDENCE_REQUIRED: 400,
@@ -46,9 +52,11 @@ const STATUS_BY_CODE: Record<string, number> = {
   IMAGE_TOO_LARGE: 400,
   NOT_IN_VERIFICATION: 400,
   VERSION_CONFLICT: 409,
+  VERIFICATION_ROUND_OPEN: 409,
   DUPLICATE_VOTE: 409,
   ALREADY_CONFIRMED: 409,
   ALREADY_FOLLOWING: 409,
+  ALREADY_ANSWERED: 409,
   RATE_LIMITED: 429,
 };
 
@@ -79,16 +87,25 @@ export function handle(fn: () => Promise<NextResponse>): Promise<NextResponse> {
   return fn().catch(mapError);
 }
 
-/** Actor desde la cookie de sesión, o null si no hay sesión válida. */
-export async function getActor(): Promise<Actor | null> {
-  const auth = await getAuth();
+/**
+ * Actor desde la cookie de sesión, o null si no hay sesión válida.
+ * Si se entrega `req`, la cookie se lee del Request explícito (los tests de
+ * integración invocan los handlers reales con un NextRequest); si no, se
+ * usa `next/headers` como antes. El rol siempre proviene de la sesión en
+ * base de datos: JSON, cookies, headers o parámetros jamás pueden fabricar
+ * un actor (y mucho menos SYSTEM).
+ */
+export async function getActor(req?: NextRequest): Promise<Actor | null> {
+  const auth = req
+    ? await getAuthFromToken(req.cookies.get(SESSION_COOKIE)?.value ?? null)
+    : await getAuth();
   if (!auth) return null;
   return buildActor(auth.user);
 }
 
 /** Actor requerido; lanza UNAUTHENTICATED si no hay sesión. */
-export async function requireActor(): Promise<Actor> {
-  const actor = await getActor();
+export async function requireActor(req?: NextRequest): Promise<Actor> {
+  const actor = await getActor(req);
   if (!actor) {
     throw new DomainError("UNAUTHENTICATED", "Se requiere iniciar sesión");
   }

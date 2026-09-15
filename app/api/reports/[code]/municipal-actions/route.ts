@@ -24,7 +24,7 @@ export async function POST(
   { params }: { params: { code: string } }
 ) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`municipal-action:${actor.id}`, 30, 60_000);
     if (rl) return rl;
     const body = await req.json();

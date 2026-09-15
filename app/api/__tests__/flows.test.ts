@@ -137,12 +137,20 @@ async function driveToVerification(w: World, code: string) {
   await transitionReport(w.ana, code, { to: "TRIAGED", expectedVersion: 2 });
   await assignDepartment(w.ana, code, { departmentId: w.deptId, expectedVersion: 3 });
   await transitionReport(w.ana, code, { to: "IN_PROGRESS", expectedVersion: 4 });
-  // Acción municipal acreditable (anterior a la solución informada).
-  await recordMunicipalAction(w.ana, code, {
+  // Acción municipal acreditada (anterior a la solución informada), con
+  // respaldo verificable: la evidencia de solución del mismo reporte.
+  const ev = await addEvidence(w.ana, code, { dataUrl: PNG_1PX, kind: "solution", description: "Trabajo realizado" });
+  const action = await recordMunicipalAction(w.ana, code, {
     type: "FIELD_WORK_RECORDED",
     publicDescription: "Cuadrilla municipal realizó el retiro.",
+    evidenceRef: ev.id,
   });
-  await addEvidence(w.ana, code, { dataUrl: PNG_1PX, kind: "solution", description: "Trabajo realizado" });
+  // Determinista: la acción queda estrictamente antes de la propuesta
+  // (evita el empate por resolución de milisegundos del reloj).
+  await transact((db) => {
+    const stored = db.municipalActions[action.id] as unknown as { createdAt: string };
+    stored.createdAt = new Date(Date.now() - 5_000).toISOString();
+  });
   await transitionReport(w.ana, code, { to: "SOLUTION_PROPOSED", expectedVersion: 5 });
   await transitionReport(w.ana, code, { to: "AWAITING_VERIFICATION", expectedVersion: 6 });
 }

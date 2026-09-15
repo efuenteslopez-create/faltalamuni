@@ -189,8 +189,8 @@ async function addEvidenceMedia(
   uploadedBy: string,
   at: string,
   description: string | null
-) {
-  await transact((db: Database) => {
+): Promise<string> {
+  return transact((db: Database) => {
     const mediaId = newId();
     const dataUrl = svgDataUrl(label, bg);
     db.reportMedia[mediaId] = {
@@ -212,11 +212,13 @@ async function addEvidenceMedia(
       uploadedBy,
       createdAt: at,
     } as unknown as (typeof db.resolutionEvidence)[string];
+    return evId;
   });
 }
 
 async function addVote(
   reportId: string,
+  verificationRequestId: string,
   voterId: string,
   voterRole: Role,
   approve: boolean,
@@ -229,6 +231,7 @@ async function addVote(
     db.verificationVotes[id] = {
       id,
       reportId,
+      verificationRequestId,
       voterId,
       voterRole,
       approve,
@@ -246,6 +249,7 @@ async function addMunicipalAction(
   actorId: string,
   type: MunicipalActionType,
   publicDescription: string,
+  evidenceRef: string,
   at: string
 ) {
   await transact((db: Database) => {
@@ -257,7 +261,8 @@ async function addMunicipalAction(
       actorId,
       type,
       publicDescription,
-      evidenceRef: null,
+      evidenceRef,
+      accredited: true,
       createdAt: at,
     } as unknown as (typeof db.municipalActions)[string];
     const auditId = newId();
@@ -351,10 +356,26 @@ async function addReopenRequest(reportId: string, requestedBy: string, reason: s
   });
 }
 
-async function addVerificationRequest(reportId: string, requestedBy: string | null, status: "open" | "resolved" | "reopened", at: string) {
-  await transact((db: Database) => {
+async function addVerificationRequest(
+  reportId: string,
+  requestedBy: string | null,
+  status: "open" | "resolved" | "reopened",
+  solutionProposedAt: string | null,
+  cycleStartAt: string | null,
+  at: string
+): Promise<string> {
+  return transact((db: Database) => {
     const id = newId();
-    db.verificationRequests[id] = { id, reportId, requestedBy, status, createdAt: at } as unknown as (typeof db.verificationRequests)[string];
+    db.verificationRequests[id] = {
+      id,
+      reportId,
+      requestedBy,
+      status,
+      solutionProposedAt,
+      cycleStartAt,
+      createdAt: at,
+    } as unknown as (typeof db.verificationRequests)[string];
+    return id;
   });
 }
 
@@ -582,7 +603,7 @@ async function main() {
   });
   await addAssignment(r5.id, "dep-transito", PAULA, daysAgo(17));
   await addEvidenceMedia(r5.id, "DESPUÉS", "#1d6f42", "solution", ANA, daysAgo(6), "Señalética repuesta y pintada.");
-  await addVerificationRequest(r5.id, ANA, "open", daysAgo(6, 1));
+  await addVerificationRequest(r5.id, ANA, "open", daysAgo(6), null, daysAgo(6, 1));
   await addResponse(r5.id, ORG_MUNI, ANA, "response", "Se repuso la señalética. Queda abierta a verificación vecinal.", daysAgo(6));
 
   // ---- R6: basural retirado y verificado (VERIFIED_RESOLVED, sello) ----------
@@ -608,17 +629,20 @@ async function main() {
   });
   await addAssignment(r6.id, "dep-aseo", PAULA, daysAgo(22));
   await addEvidenceMedia(r6.id, "ANTES", "#6b4f2a", "problem", CAMILA, daysAgo(25), "Estado del bandejón al reportar.");
-  await addEvidenceMedia(r6.id, "DESPUÉS", "#1d6f42", "solution", ANA, daysAgo(10), "Bandejón limpio y con cierre perimetral.");
-  await addVote(r6.id, CAMILA, "RESIDENT", true, "Pasé hoy y está limpio. ¡Gracias!", 2, daysAgo(4));
-  await addVote(r6.id, JORGE, "VERIFIED_RESIDENT", true, "Confirmo: retiraron todo el escombro.", 1, daysAgo(3));
-  // Acción municipal acreditable ANTES de la solución informada (daysAgo(10)):
-  // es lo que sustenta el sello "Ya estuvo la Muni" (iteración 1).
+  const r6SolutionEvidence = await addEvidenceMedia(r6.id, "DESPUÉS", "#1d6f42", "solution", ANA, daysAgo(10), "Bandejón limpio y con cierre perimetral.");
+  const r6Round = await addVerificationRequest(r6.id, ANA, "resolved", daysAgo(10), null, daysAgo(10, 1));
+  await addVote(r6.id, r6Round, CAMILA, "RESIDENT", true, "Pasé hoy y está limpio. ¡Gracias!", 2, daysAgo(4));
+  await addVote(r6.id, r6Round, JORGE, "VERIFIED_RESIDENT", true, "Confirmo: retiraron todo el escombro.", 1, daysAgo(3));
+  // Acción municipal acreditada ANTES de la solución informada (daysAgo(10)):
+  // es lo que sustenta el sello "Ya estuvo la Muni" (iteración 1). El
+  // respaldo verificable es la evidencia de solución del mismo reporte.
   await addMunicipalAction(
     r6.id,
     ORG_MUNI,
     ANA,
     "FIELD_WORK_RECORDED",
     "Cuadrilla municipal retiró el basural e instaló cierre perimetral.",
+    r6SolutionEvidence,
     daysAgo(12)
   );
   // Auditoría de la resolución por quórum ciudadano (vía A: autora + vecino verificado).
@@ -638,7 +662,6 @@ async function main() {
       createdAt: daysAgo(3),
     } as unknown as (typeof db.auditEvents)[string];
   });
-  await addVerificationRequest(r6.id, ANA, "resolved", daysAgo(10, 1));
   await addConfirmation(r6.id, JORGE, daysAgo(20));
   await addResponse(r6.id, ORG_MUNI, ANA, "response", "Retiro completado por cuadrilla municipal. Se instaló cierre perimetral.", daysAgo(10));
 
@@ -671,7 +694,7 @@ async function main() {
   await addAssignment(r7.id, "dep-obras", PAULA, daysAgo(27));
   await addEvidenceMedia(r7.id, "DESPUÉS", "#1d6f42", "solution", ANA, daysAgo(14), "Reparación inicial.");
   await addReopenRequest(r7.id, JORGE, "La vereda se volvió a hundir con la lluvia de esta semana.", daysAgo(5));
-  await addVerificationRequest(r7.id, ANA, "reopened", daysAgo(14, 1));
+  await addVerificationRequest(r7.id, ANA, "reopened", daysAgo(14), null, daysAgo(14, 1));
 
   // ---- R8: reporte duplicado de R1 (possibleDuplicates) ----------------------
   const r8 = await seedReport({
