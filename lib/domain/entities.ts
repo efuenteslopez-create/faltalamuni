@@ -405,6 +405,17 @@ export type TimelineItem =
       weight: number;
       comment: string | null;
       voterDisplay: string;
+      /**
+       * Identificación de ronda (iteración 1, "vincular atribución a la
+       * ronda que resolvió"): el voto pertenece a una ronda de
+       * verificación, no al reporte. roundNumber es 1-based en orden de
+       * creación; currentRound indica la verificación vigente (ronda abierta
+       * o última resuelta), para no mezclar visualmente verificaciones
+       * anteriores con la actual.
+       */
+      verificationRequestId: string;
+      roundNumber: number;
+      currentRound: boolean;
     }
   | {
       type: "municipal-action";

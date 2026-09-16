@@ -314,6 +314,42 @@ function formatDateCl(iso: string): string {
 }
 
 /**
+ * Evento de auditoría `report.verification_resolved` que corresponde a la
+ * ronda resolved VIGENTE (iteración 1, "vincular atribución a la ronda que
+ * resolvió").
+ *
+ * Se obtiene primero la ronda vía `resolvingRound` (la ronda cerrada como
+ * "resolved" más reciente) y luego se busca el evento cuyo
+ * `detail.verificationRequestId` coincida con esa ronda. JAMÁS se devuelve
+ * "el primer evento encontrado".
+ *
+ * Fallback legado, claramente separado: solo para datos históricos
+ * escritos antes de que el evento registrara `verificationRequestId`. En
+ * ese caso se usa el evento de resolución más reciente.
+ */
+function findResolvingAudit(
+  db: Database,
+  reportId: string
+): AuditEvent | undefined {
+  const events = all<AuditEvent>(db, "auditEvents")
+    .filter(
+      (e) => e.entityId === reportId && e.action === "report.verification_resolved"
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const round = resolvingRound(db, reportId);
+  if (round) {
+    const matched = events.find(
+      (e) => e.detail?.["verificationRequestId"] === round.id
+    );
+    if (matched) return matched;
+    // Fallback legado: datos históricos anteriores a verificationRequestId.
+    return events[0];
+  }
+  // Sin ronda (datos históricos): el más reciente, nunca "el primero".
+  return events[0];
+}
+
+/**
  * Construye la explicación estructurada de atribución del reporte:
  * responsable, gestor, ejecutor, verificación y detalle del crédito
  * municipal. Es lo que la interfaz pública muestra para explicar por qué
@@ -323,12 +359,13 @@ export function buildAttribution(db: Database, report: Report): Attribution {
   const actions = causalMunicipalActions(db, report);
   const granted = report.state === "VERIFIED_RESOLVED" && actions.length > 0;
 
-  // Cómo se verificó: auditoría de la resolución (o votos, para datos históricos).
+  // Cómo se verificó: auditoría de la resolución vinculada a la ronda que
+  // resolvió (iteración 1, "vincular atribución a la ronda que resolvió").
+  // Nunca se usa "el primer auditEvent encontrado": se busca el evento cuya
+  // detail.verificationRequestId coincida con la ronda resolved vigente.
   let verification: Attribution["verification"] = null;
   if (report.state === "VERIFIED_RESOLVED") {
-    const resolutionAudit = all<AuditEvent>(db, "auditEvents").find(
-      (e) => e.entityId === report.id && e.action === "report.verification_resolved"
-    );
+    const resolutionAudit = findResolvingAudit(db, report.id);
     const via = resolutionAudit?.detail?.["via"] as
       | "author-plus-neighbor"
       | "community"

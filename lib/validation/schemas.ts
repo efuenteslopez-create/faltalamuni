@@ -135,6 +135,36 @@ export const municipalActionSchema = z.object({
   idempotencyKey: uuidSchema.optional(),
 });
 
+/**
+ * POST /api/reports/[code]/public-references — referencia pública
+ * verificable (documento, URL o registro). Nunca se acepta organizationId,
+ * actorId, accredited, createdAt ni roles desde el cliente: todos derivan
+ * de la sesión.
+ */
+export const publicReferenceSchema = z
+  .object({
+    kind: z.enum(["document", "url", "registry"]),
+    reference: z.string().trim().min(1).max(500),
+    summary: z.string().trim().min(5).max(1000),
+    idempotencyKey: uuidSchema.optional(),
+  })
+  .strict();
+
+/**
+ * POST /api/reports/[code]/referral-acceptances — la agencia receptora
+ * responde una derivación. Solo la agencia de la derivación puede
+ * registrarla; nunca se acepta organizationId, actorId, createdAt ni roles
+ * desde el cliente.
+ */
+export const referralAcceptanceSchema = z
+  .object({
+    referralId: idSchema,
+    accepted: z.boolean(),
+    message: z.string().trim().min(5).max(2000),
+    idempotencyKey: uuidSchema.optional(),
+  })
+  .strict();
+
 export const inboxQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

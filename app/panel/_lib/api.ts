@@ -12,8 +12,9 @@ import type {
   Role,
   StatusEvent,
 } from "@/lib/domain/types";
+import type { TimelineItem } from "@/lib/domain/entities";
 
-export type { Report, ReportState, Role, Category, StatusEvent };
+export type { Report, ReportState, Role, Category, StatusEvent, TimelineItem };
 
 /** Error HTTP con estado y cuerpo opcional (sin `any`). */
 export class ApiError extends Error {
@@ -166,13 +167,7 @@ export async function fetchReport(code: string): Promise<ReportDetail> {
   return payload as unknown as ReportDetail;
 }
 
-/** Evento de la línea de tiempo pública/auditable del reporte. */
-export interface TimelineItem extends StatusEvent {
-  actorName?: string | null;
-  actorRole?: Role | null;
-  message?: string | null;
-  kind?: string | null;
-}
+/** Evento de la línea de tiempo: el contrato público real (unión discriminada). */
 
 export async function fetchTimeline(code: string): Promise<TimelineItem[]> {
   try {

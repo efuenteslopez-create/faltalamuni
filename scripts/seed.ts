@@ -656,6 +656,7 @@ async function main() {
       entityId: r6.id,
       detail: {
         code: r6.code,
+        verificationRequestId: r6Round,
         via: "author-plus-neighbor",
         approvingVoterIds: [CAMILA, JORGE],
       },

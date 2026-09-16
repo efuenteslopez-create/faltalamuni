@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, friendlyErrorMessage, type ReportDetail as Detail, type TimelineEvent } from "@/lib/flm/api";
-import { REPORT_STATE_LABELS } from "@/lib/domain/types";
+import { api, friendlyErrorMessage, type ReportDetail as Detail, type TimelineItem } from "@/lib/flm/api";
 import { StatusBadge, YaEstuvoLaMuniBadge } from "@/components/ui/StatusBadge";
+import { TimelineList } from "@/components/timeline/TimelineList";
 import { Button, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { ShareButtons } from "@/components/citizen/ShareButtons";
 import { CitizenMap } from "@/components/map/CitizenMap";
@@ -17,7 +17,7 @@ export function ReportDetail({ code }: { code: string }) {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [report, setReport] = useState<Detail | null>(null);
-  const [events, setEvents] = useState<TimelineEvent[] | null>(null);
+  const [events, setEvents] = useState<TimelineItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [following, setFollowing] = useState(false);
@@ -36,7 +36,9 @@ export function ReportDetail({ code }: { code: string }) {
         api.timeline(code).catch(() => null),
       ]);
       setReport(detail);
-      setEvents(timeline?.events ?? []);
+      // El contrato del timeline es el arreglo real TimelineItem[]
+      // (unión discriminada) que devuelve el endpoint.
+      setEvents(timeline ?? []);
       setIsFollowing(followedCodes.has(code));
       setHasConfirmed(confirmedCodes.has(code));
     } catch (err) {
@@ -365,43 +367,15 @@ export function ReportDetail({ code }: { code: string }) {
             </div>
           </div>
 
-          {/* Cronología */}
+          {/* Cronología: el endpoint devuelve TimelineItem[] real. */}
           <section aria-label="Cronología del reporte" className="flm-card mt-6 p-4 sm:p-6">
             <h2 className="text-lg font-extrabold text-flm-ink">Cronología</h2>
             {events === null ? (
               <Skeleton className="mt-3 h-16" />
-            ) : events.length === 0 ? (
-              <p className="mt-2 text-sm text-flm-muted">
-                Aún no hay movimientos registrados. Te avisaremos cuando cambie su estado.
-              </p>
             ) : (
-              <ol className="mt-4 space-y-0">
-                {events.map((ev, i) => (
-                  <li key={`${ev.createdAt}-${i}`} className="relative flex gap-3 pb-5 last:pb-0">
-                    <span aria-hidden className="flex flex-col items-center">
-                      <span className="h-3 w-3 rounded-full bg-flm-accent" />
-                      {i < events.length - 1 && <span className="w-px flex-1 bg-flm-line" />}
-                    </span>
-                    <div className="pb-1">
-                      <p className="text-sm font-bold text-flm-ink">
-                        {REPORT_STATE_LABELS[ev.to]}
-                      </p>
-                      {ev.reason && (
-                        <p className="mt-0.5 text-sm text-flm-muted">{ev.reason}</p>
-                      )}
-                      <p className="mt-0.5 text-xs text-flm-muted">
-                        {new Date(ev.createdAt).toLocaleString("es-CL", {
-                          day: "numeric",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                        {ev.actorRole && ` · ${ev.actorRole}`}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
+              <div className="mt-3">
+                <TimelineList items={events} variant="citizen" />
+              </div>
             )}
           </section>
         </div>

@@ -16,14 +16,13 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AccessDenied } from "@/components/panel/AccessDenied";
 import { TransitionButtons } from "@/components/panel/TransitionButtons";
 import { InternalNotes } from "@/components/panel/InternalNotes";
-import { REPORT_STATE_LABELS } from "@/lib/domain/types";
+import { TimelineList } from "@/components/timeline/TimelineList";
 import {
   ApiError,
   EXTERNAL_AGENCIES,
   PANEL_DEPARTMENTS,
   fetchReport,
   fetchTimeline,
-  formatDateTime,
   getMe,
   isPanelRole,
   postAssignment,
@@ -301,34 +300,7 @@ export default function ReportDetailPage({
       {tab === "historial" && (
         <Card>
           <h2 className="mb-3 text-lg font-bold text-flm-ink">Historial auditable</h2>
-          {timeline.length === 0 ? (
-            <p className="text-sm text-flm-muted">
-              Aún no hay eventos registrados para este reporte.
-            </p>
-          ) : (
-            <ol className="space-y-4">
-              {timeline.map((ev) => (
-                <li key={ev.id} className="flex gap-3">
-                  <span
-                    aria-hidden
-                    className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-flm-institutional"
-                  />
-                  <div className="text-sm">
-                    <p className="font-bold text-flm-ink">
-                      {ev.from
-                        ? `${REPORT_STATE_LABELS[ev.from]} → ${REPORT_STATE_LABELS[ev.to]}`
-                        : REPORT_STATE_LABELS[ev.to]}
-                    </p>
-                    {ev.message && <p className="mt-0.5 text-flm-ink">{ev.message}</p>}
-                    {ev.reason && <p className="mt-0.5 text-flm-ink">{ev.reason}</p>}
-                    <p className="mt-0.5 text-xs text-flm-muted">
-                      {ev.actorName ?? "Sistema"} · {formatDateTime(ev.createdAt)}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
+          <TimelineList items={timeline} variant="panel" />
         </Card>
       )}
     </div>

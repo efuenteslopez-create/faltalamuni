@@ -4,7 +4,10 @@
  * las llamadas fallan con ApiError y la UI muestra estados amables.
  */
 import type { GeoPoint, ReportState, Role } from "@/lib/domain/types";
-import type { Attribution } from "@/lib/domain/entities";
+import type { Attribution, TimelineItem } from "@/lib/domain/entities";
+
+/** Re-exportado: el timeline público es la unión discriminada compartida. */
+export type { TimelineItem };
 
 /* ------------------------------------------------------------------ */
 /* Tipos del contrato                                                  */
@@ -55,19 +58,12 @@ export interface ReportDetail extends ReportListItem {
   attribution: Attribution;
 }
 
-export interface TimelineEvent {
-  from: ReportState | null;
-  to: ReportState;
-  actorRole: string | null;
-  reason: string | null;
-  createdAt: string;
-}
-
-export interface TimelineResponse {
-  events: TimelineEvent[];
-  responses: unknown[];
-  votes: unknown[];
-}
+/**
+ * El timeline público es el arreglo real que devuelve
+ * GET /api/reports/[code]/timeline: la unión discriminada `TimelineItem`
+ * (status | response | evidence | vote | municipal-action).
+ */
+export type TimelineResponse = TimelineItem[];
 
 export interface DuplicateCandidate {
   code: string;

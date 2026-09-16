@@ -61,6 +61,7 @@ import {
   put,
   requireActor,
   resolveActionBacking,
+  resolvingRound,
   toReportDto,
 } from "./common";
 import { validateImageDataUrl } from "./media";
@@ -727,7 +728,10 @@ export async function voteVerification(
           vr.status = "resolved";
         }
       }
-      // La resolución registra los votos que activaron la decisión.
+      // La resolución registra la ronda que resolvió y los votos que
+      // activaron la decisión (iteración 1, "vincular atribución"): el
+      // verificationRequestId permite a buildAttribution localizar este
+      // evento sin usar "el primer auditEvent encontrado".
       auditTx(db, {
         action: "report.verification_resolved",
         actorId: null,
@@ -735,6 +739,7 @@ export async function voteVerification(
         entityId: report.id,
         detail: {
           code,
+          verificationRequestId: round.id,
           via,
           approvingVoterIds: evaluation.approvingVoterIds,
         },
@@ -1427,6 +1432,17 @@ export async function getTimeline(
       });
     }
 
+    // Mapa de rondas de verificación del reporte (orden de creación):
+    // número 1-based + cuál es la vigente (abierta o última resuelta).
+    const rounds = all<VerificationRequest>(db, "verificationRequests")
+      .filter((vr) => vr.reportId === report.id)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    const roundNumber = new Map(rounds.map((vr, i) => [vr.id, i + 1]));
+    const currentRoundId =
+      rounds.find((vr) => vr.status === "open")?.id ??
+      resolvingRound(db, report.id)?.id ??
+      null;
+
     const users = new Map(all<{ id: string; displayName: string }>(db, "users").map((u) => [u.id, u.displayName]));
     for (const v of all<VerificationVote>(db, "verificationVotes").filter(
       (x) => x.reportId === report.id
@@ -1438,6 +1454,9 @@ export async function getTimeline(
         weight: v.weight,
         comment: v.comment,
         voterDisplay: users.get(v.voterId) ?? "Vecino/a",
+        verificationRequestId: v.verificationRequestId,
+        roundNumber: roundNumber.get(v.verificationRequestId) ?? 1,
+        currentRound: v.verificationRequestId === currentRoundId,
       });
     }
 
