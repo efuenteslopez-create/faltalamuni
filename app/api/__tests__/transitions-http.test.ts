@@ -131,11 +131,11 @@ async function stateOf(code: string): Promise<string> {
 
 describe("POST /api/reports/[code]/transitions (handler real)", () => {
   it("sin autenticar → 401", async () => {
-    const w = await setupWorld();
+    await setupWorld();
     const code = await firstCode();
     const res = await transitionsPOST(
       req(`/api/reports/${code}/transitions`, { to: "ACKNOWLEDGED", expectedVersion: 1 }),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(401);
     const body = await res.json();
@@ -152,7 +152,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         { to: "VERIFIED_RESOLVED", expectedVersion: 1 },
         w.adminToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -171,7 +171,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         { to: "VERIFIED_RESOLVED", expectedVersion: 1 },
         w.martaToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -188,7 +188,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         { to: "VERIFIED_RESOLVED", expectedVersion: 1 },
         w.anaToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe("FORBIDDEN");
@@ -209,7 +209,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         w.adminToken,
         { "x-actor-role": "SYSTEM", "x-role": "SYSTEM" }
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     // Sigue siendo 403: el cuerpo y los headers no deciden el actor.
     expect(res.status).toBe(403);
@@ -236,7 +236,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         },
         w.adminToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -253,7 +253,7 @@ describe("POST /api/reports/[code]/transitions (handler real)", () => {
         { to: "ESTADO_INVENTADO", expectedVersion: 1 },
         w.adminToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe("VALIDATION");
@@ -270,7 +270,7 @@ describe("POST /api/reports/[code]/municipal-actions (handler real)", () => {
         { type: "FIELD_WORK_RECORDED", publicDescription: "Listo" },
         w.anaToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -295,7 +295,7 @@ describe("POST /api/reports/[code]/municipal-actions (handler real)", () => {
         },
         w.anaToken
       ),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(201);
     const body = await res.json();
@@ -312,7 +312,7 @@ describe("POST /api/reports/[code]/municipal-actions (handler real)", () => {
         type: "FIELD_WORK_RECORDED",
         publicDescription: "Listo",
       }),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(401);
   });

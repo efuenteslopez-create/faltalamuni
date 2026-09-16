@@ -6,7 +6,7 @@ import { handle, ok, requireActor, parseQuery } from "@/lib/api/http";
 /** GET /api/panel/inbox — bandeja institucional (rol institucional + alcance). */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const q = parseQuery(inboxQuerySchema, req);
     const data = await getInbox(actor, { page: q.page, pageSize: q.pageSize });
     return ok(data);

@@ -10,31 +10,33 @@ import {
 /** POST /api/reports/[code]/follow — seguir un reporte. */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`follow:${actor.id}`, 30, 60_000);
     if (rl) return rl;
     return withIdempotency(req, async () => {
-      const data = await followReport(actor, params.code);
+      const data = await followReport(actor, code);
       return { status: 200, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id });
   });
 }
 
 /** DELETE /api/reports/[code]/follow — dejar de seguir. */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`follow:${actor.id}`, 30, 60_000);
     if (rl) return rl;
     return withIdempotency(req, async () => {
-      const data = await unfollowReport(actor, params.code);
+      const data = await unfollowReport(actor, code);
       return { status: 200, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id });
   });
 }

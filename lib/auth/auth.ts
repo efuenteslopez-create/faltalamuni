@@ -87,6 +87,39 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return timingSafeEqual(derived, expected);
 }
 
+/**
+ * Hash scrypt fijo para el flujo de login cuando el usuario no existe.
+ * Propósito: trabajo criptográfico EQUIVALENTE al de un usuario real, para
+ * que "correo inexistente" y "contraseña incorrecta" recorran el mismo camino
+ * (sin diferencia temporal explotable). No es un secreto: nunca se compara
+ * contra una contraseña real ni otorga acceso.
+ */
+const DUMMY_LOGIN_HASH =
+  "scrypt$666c6d64756d6d7973616c7431323334$157a11bfe660642e1e428072f3147fe1df474ece0b287cb679085a9fe937a806693730e12b1d1e23dd504c9d2e049c70df7a1dfdd4a23c25c90537e9eb285145";
+
+/** Solo tests: cuenta ejecuciones scrypt del flujo de login. */
+let __loginCryptoRuns = 0;
+export function __resetLoginCryptoRuns(): void {
+  __loginCryptoRuns = 0;
+}
+export function __loginCryptoRunCount(): number {
+  return __loginCryptoRuns;
+}
+
+/**
+ * Verificación de contraseña del flujo de login. Si no hay hash almacenado
+ * (usuario inexistente) se verifica contra el hash dummy: el trabajo
+ * criptográfico es idéntico y el resultado siempre es falso.
+ */
+export async function verifyLoginPassword(
+  password: string,
+  storedHash: string | undefined
+): Promise<boolean> {
+  __loginCryptoRuns += 1;
+  const ok = await verifyPassword(password, storedHash ?? DUMMY_LOGIN_HASH);
+  return storedHash !== undefined && ok;
+}
+
 function sign(value: string): string {
   return createHmac("sha256", sessionSecret()).update(value).digest("hex");
 }
@@ -145,7 +178,7 @@ export interface AuthContext {
 
 /** Lee la sesión desde la cookie httpOnly. Retorna null si no hay sesión válida. */
 export async function getAuth(): Promise<AuthContext | null> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   return getAuthFromToken(token ?? null);
 }
@@ -199,8 +232,8 @@ export async function requireAuth(): Promise<AuthContext> {
   return auth;
 }
 
-export function setSessionCookie(token: string): void {
-  const cookieStore = cookies();
+export async function setSessionCookie(token: string): Promise<void> {
+  const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -210,8 +243,8 @@ export function setSessionCookie(token: string): void {
   });
 }
 
-export function clearSessionCookie(): void {
-  const cookieStore = cookies();
+export async function clearSessionCookie(): Promise<void> {
+  const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",

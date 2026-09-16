@@ -8,11 +8,11 @@ import { handle, ok } from "@/lib/api/http";
 
 export async function POST() {
   return handle(async () => {
-    const token = cookies().get(SESSION_COOKIE)?.value;
+    const token = (await cookies()).get(SESSION_COOKIE)?.value;
     if (token) {
       await destroySession(token);
     }
-    clearSessionCookie();
+    await clearSessionCookie();
     return ok({ loggedOut: true });
   });
 }

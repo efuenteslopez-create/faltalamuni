@@ -97,7 +97,12 @@ export function CitizenMapImpl({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const propsRef = useRef({ points, onSelect, pickMode, onPick });
-  propsRef.current = { points, onSelect, pickMode, onPick };
+  // Los refs no pueden escribirse durante el render (React 19): se
+  // sincronizan en un efecto para que los callbacks del mapa vean los
+  // últimos props sin recrear el mapa.
+  useEffect(() => {
+    propsRef.current = { points, onSelect, pickMode, onPick };
+  });
 
   /* Crear el mapa una sola vez */
   useEffect(() => {

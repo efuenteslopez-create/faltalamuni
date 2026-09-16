@@ -12,7 +12,7 @@ import {
 /** POST /api/panel/referrals — derivar reporte a una agencia externa. */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`refer:${actor.id}`, 30, 60_000);
     if (rl) return rl;
     const body = await req.json();
@@ -31,6 +31,6 @@ export async function POST(req: NextRequest) {
         expectedVersion: parsed.data.expectedVersion,
       });
       return { status: 200, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: { code, ...parsed.data } });
   });
 }

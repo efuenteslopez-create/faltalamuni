@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/reports — crear reporte (10/min por usuario, Idempotency-Key). */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`report-create:${actor.id}`, 10, 60_000);
     if (rl) return rl;
     const body = await req.json();
@@ -67,6 +67,6 @@ export async function POST(req: NextRequest) {
         photoDataUrl: parsed.data.photoDataUrl,
       });
       return { status: 201, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: parsed.data });
   });
 }

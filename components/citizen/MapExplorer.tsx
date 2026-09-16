@@ -33,6 +33,16 @@ export function MapExplorer() {
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
 
+  // Al cambiar la categoría se limpian los resultados durante el render
+  // (patrón documentado de React): evita setState sincrónico dentro del
+  // efecto de carga.
+  const [lastCategoryId, setLastCategoryId] = useState(categoryId);
+  if (lastCategoryId !== categoryId) {
+    setLastCategoryId(categoryId);
+    setItems(null);
+    setError(null);
+  }
+
   useEffect(() => {
     const on = () => setOnline(true);
     const off = () => setOnline(false);
@@ -50,8 +60,6 @@ export function MapExplorer() {
 
   useEffect(() => {
     let cancelled = false;
-    setItems(null);
-    setError(null);
     api
       .reports({ categoryId: categoryId === "all" ? undefined : categoryId, page: 1 })
       .then((res) => {

@@ -1,8 +1,14 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { transact, nowIso } from "@/lib/db/store";
 import {
-  getIdempotentResponse,
-  saveIdempotentResponse,
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+  failIdempotencyKey,
+  waitForIdempotencyResult,
+  stableBodyHash,
+  __setIdempotencyProcessingTtl,
+  __resetIdempotencyProcessingTtl,
+  type IdempotencyFingerprint,
 } from "@/lib/idempotency";
 import {
   createReport,
@@ -20,20 +26,127 @@ beforeEach(() => {
   freshDb();
 });
 
-describe("idempotencia", () => {
-  it("guarda y recupera la respuesta original sin re-ejecutar", async () => {
-    expect(await getIdempotentResponse("clave-inexistente")).toBeNull();
-    const body = { ok: true, data: { code: "FLM-PUD-000001" } };
-    await saveIdempotentResponse("clave-1", 201, body);
-    const cached = await getIdempotentResponse("clave-1");
-    expect(cached).toEqual({ statusCode: 201, body });
+beforeEach(() => {
+  freshDb();
+});
+
+afterEach(() => {
+  __resetIdempotencyProcessingTtl();
+});
+
+const FP = (over: Partial<IdempotencyFingerprint> = {}): IdempotencyFingerprint => ({
+  actorId: "user-1",
+  method: "POST",
+  route: "/api/reports",
+  bodyHash: stableBodyHash({ a: 1 }),
+  ...over,
+});
+
+describe("idempotencia concurrente", () => {
+  it("primer claim es líder; segundo con la misma identidad espera", async () => {
+    const c1 = await claimIdempotencyKey("k-1", FP());
+    expect(c1.outcome).toBe("leader");
+    const c2 = await claimIdempotencyKey("k-1", FP());
+    expect(c2.outcome).toBe("wait");
   });
 
-  it("no sobrescribe una respuesta ya guardada", async () => {
-    await saveIdempotentResponse("clave-2", 200, { ok: true, data: 1 });
-    await saveIdempotentResponse("clave-2", 200, { ok: true, data: 2 });
-    const cached = await getIdempotentResponse("clave-2");
-    expect(cached?.body).toEqual({ ok: true, data: 1 });
+  it("completar permite replay con el mismo status/body sin re-ejecutar", async () => {
+    const c1 = await claimIdempotencyKey("k-2", FP());
+    expect(c1.outcome).toBe("leader");
+    if (c1.outcome !== "leader") throw new Error("se esperaba líder");
+    const body = { ok: true, data: { code: "FLM-PUD-000001" } };
+    await completeIdempotencyKey("k-2", c1.claimId, 201, body);
+    const replay = await claimIdempotencyKey("k-2", FP());
+    expect(replay).toEqual({ outcome: "replay", statusCode: 201, body });
+    // Un claim posterior con otra identidad sigue siendo conflicto.
+    expect(await claimIdempotencyKey("k-2", FP({ actorId: "user-2" }))).toEqual({
+      outcome: "conflict",
+    });
+  });
+
+  it("distinta identidad (actor, método, ruta o body) → conflicto", async () => {
+    const c1 = await claimIdempotencyKey("k-3", FP());
+    expect(c1.outcome).toBe("leader");
+    expect(await claimIdempotencyKey("k-3", FP({ actorId: "otro" }))).toEqual({
+      outcome: "conflict",
+    });
+    expect(await claimIdempotencyKey("k-3", FP({ method: "DELETE" }))).toEqual({
+      outcome: "conflict",
+    });
+    expect(await claimIdempotencyKey("k-3", FP({ route: "/api/otra" }))).toEqual({
+      outcome: "conflict",
+    });
+    expect(
+      await claimIdempotencyKey("k-3", FP({ bodyHash: stableBodyHash({ a: 2 }) }))
+    ).toEqual({ outcome: "conflict" });
+  });
+
+  it("fallo libera la clave: el reintento con la misma identidad reclama", async () => {
+    const c1 = await claimIdempotencyKey("k-4", FP());
+    expect(c1.outcome).toBe("leader");
+    if (c1.outcome !== "leader") throw new Error("se esperaba líder");
+    await failIdempotencyKey("k-4", c1.claimId);
+    const c2 = await claimIdempotencyKey("k-4", FP());
+    expect(c2.outcome).toBe("leader");
+  });
+
+  it("PROCESSING abandonado (TTL) puede ser reclamado", async () => {
+    __setIdempotencyProcessingTtl(30);
+    const c1 = await claimIdempotencyKey("k-5", FP());
+    expect(c1.outcome).toBe("leader");
+    // El líder muere sin completar: tras el TTL la clave es reclamable.
+    await new Promise((r) => setTimeout(r, 60));
+    const c2 = await claimIdempotencyKey("k-5", FP());
+    expect(c2.outcome).toBe("leader");
+  });
+
+  it("un líder obsoleto no pisa el reclamo nuevo (claimId)", async () => {
+    __setIdempotencyProcessingTtl(30);
+    const c1 = await claimIdempotencyKey("k-5", FP());
+    if (c1.outcome !== "leader") throw new Error("se esperaba líder");
+    await new Promise((r) => setTimeout(r, 60));
+    const c2 = await claimIdempotencyKey("k-5", FP());
+    expect(c2.outcome).toBe("leader");
+    if (c2.outcome !== "leader") throw new Error("se esperaba líder");
+    // El líder viejo intenta completar: se ignora.
+    await completeIdempotencyKey("k-5", c1.claimId, 200, { ok: true });
+    await completeIdempotencyKey("k-5", c2.claimId, 201, { ok: true, data: 1 });
+    const replay = await claimIdempotencyKey("k-5", FP());
+    expect(replay).toEqual({
+      outcome: "replay",
+      statusCode: 201,
+      body: { ok: true, data: 1 },
+    });
+  });
+
+  it("waiter recibe el resultado del líder sin re-ejecutar", async () => {
+    const c1 = await claimIdempotencyKey("k-7", FP());
+    if (c1.outcome !== "leader") throw new Error("se esperaba líder");
+    const waiting = waitForIdempotencyResult("k-7");
+    // El líder tarda un poco y completa.
+    await new Promise((r) => setTimeout(r, 80));
+    await completeIdempotencyKey("k-7", c1.claimId, 200, { ok: true, n: 7 });
+    await expect(waiting).resolves.toEqual({
+      statusCode: 200,
+      body: { ok: true, n: 7 },
+    });
+  });
+
+  it("waiter ve el fallo del líder como IDEMPOTENCY_UPSTREAM_FAILED", async () => {
+    const c1 = await claimIdempotencyKey("k-8", FP());
+    if (c1.outcome !== "leader") throw new Error("se esperaba líder");
+    const waiting = waitForIdempotencyResult("k-8");
+    await failIdempotencyKey("k-8", c1.claimId);
+    await expect(waiting).rejects.toMatchObject({
+      code: "IDEMPOTENCY_UPSTREAM_FAILED",
+    });
+  });
+
+  it("stableBodyHash es independiente del orden de claves", () => {
+    expect(stableBodyHash({ a: 1, b: { x: 1, y: 2 } })).toBe(
+      stableBodyHash({ b: { y: 2, x: 1 }, a: 1 })
+    );
+    expect(stableBodyHash({ a: 1 })).not.toBe(stableBodyHash({ a: 2 }));
   });
 });
 

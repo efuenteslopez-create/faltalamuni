@@ -31,9 +31,18 @@ export function DuplicateCheck({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // Al cambiar los parámetros de búsqueda se vuelve a "loading" durante el
+  // render (patrón documentado de React): evita setState sincrónico dentro
+  // del efecto.
+  const requestKey = `${lng}|${lat}|${categoryId}`;
+  const [lastRequestKey, setLastRequestKey] = useState(requestKey);
+  if (lastRequestKey !== requestKey) {
+    setLastRequestKey(requestKey);
+    setState("loading");
+  }
+
   useEffect(() => {
     let cancelled = false;
-    setState("loading");
     api
       .duplicates({ lng, lat, categoryId })
       .then((res) => {

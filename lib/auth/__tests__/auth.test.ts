@@ -16,7 +16,7 @@ import { join } from "path";
 const cookieJar = new Map<string, string>();
 
 vi.mock("next/headers", () => ({
-  cookies: () => ({
+  cookies: async () => ({
     get: (name: string) => {
       const value = cookieJar.get(name);
       return value === undefined ? undefined : { name, value };
@@ -100,7 +100,7 @@ describe("firma de sesión HMAC-SHA256", () => {
     const user = await seedUser();
     const token = await createSession(user.id);
     expect(token).toMatch(/^[0-9a-f-]{36}\.[0-9a-f]{64}$/);
-    setSessionCookie(token);
+    await setSessionCookie(token);
 
     const auth = await getAuth();
     expect(auth).not.toBeNull();
@@ -140,7 +140,7 @@ describe("firma de sesión HMAC-SHA256", () => {
   it("destroySession revoca la sesión", async () => {
     const user = await seedUser();
     const token = await createSession(user.id);
-    setSessionCookie(token);
+    await setSessionCookie(token);
     expect(await getAuth()).not.toBeNull();
 
     await destroySession(token);
@@ -149,8 +149,8 @@ describe("firma de sesión HMAC-SHA256", () => {
 
   it("clearSessionCookie elimina la cookie", async () => {
     const user = await seedUser();
-    setSessionCookie(await createSession(user.id));
-    clearSessionCookie();
+    await setSessionCookie(await createSession(user.id));
+    await clearSessionCookie();
     // maxAge=0: la cookie queda vacía y getAuth la trata como ausente
     expect(cookieJar.get(SESSION_COOKIE)).toBe("");
     expect(await getAuth()).toBeNull();
@@ -168,7 +168,7 @@ describe("expiración de sesiones", () => {
       s.expiresAt = new Date(Date.now() - 1000).toISOString();
     });
 
-    setSessionCookie(token);
+    await setSessionCookie(token);
     expect(await getAuth()).toBeNull();
 
     const stillThere = await read(
@@ -186,7 +186,7 @@ describe("expiración de sesiones", () => {
       (db.sessions[sessionId] as unknown as SessionDoc).expiresAt = nearExpiry;
     });
 
-    setSessionCookie(token);
+    await setSessionCookie(token);
     expect(await getAuth()).not.toBeNull();
     const after = await read(
       (db) => db.sessions[sessionId] as unknown as SessionDoc
@@ -204,7 +204,7 @@ describe("expiración de sesiones", () => {
       (db.sessions[sessionId] as unknown as SessionDoc).expiresAt = nearExpiry;
     });
 
-    setSessionCookie(token);
+    await setSessionCookie(token);
     expect(await getAuth()).not.toBeNull();
     const after = await read(
       (db) => db.sessions[sessionId] as unknown as SessionDoc

@@ -19,7 +19,7 @@ import {
   transact,
 } from "@/lib/db/store";
 import { createUser } from "@/lib/auth/auth";
-import { audit } from "@/lib/audit";
+import { audit, rechainAuditEventsTx } from "@/lib/audit";
 import { formatReportCode, haversineMeters } from "@/lib/domain/geo";
 import {
   Category,
@@ -379,11 +379,6 @@ async function addVerificationRequest(
   });
 }
 
-async function setVerifier(reportId: string, verifierId: string | null) {
-  await transact((db: Database) => {
-    (db.reports[reportId] as unknown as Report).verifierId = verifierId;
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Seed
@@ -747,6 +742,13 @@ async function main() {
     detail: {
       reports: [r1.code, r2.code, r3.code, r4.code, r5.code, r6.code, r7.code, r8.code, r9.code],
     },
+  });
+
+  // El seed mezcla eventos históricos (createdAt antiguo) con eventos del
+  // flujo de dominio: se reencadena todo por orden cronológico para que la
+  // cadena tamper-evident quede válida sobre los datos demo.
+  await transact((db) => {
+    rechainAuditEventsTx(db);
   });
 
   console.log("Seed OK — 9 reportes demo en Pudahuel:");

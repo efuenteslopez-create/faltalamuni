@@ -25,8 +25,9 @@ import {
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
     const actor = await requireActor(req);
     const rl = rateLimited(`referral-acceptance:${actor.id}`, 30, 60_000);
@@ -37,12 +38,12 @@ export async function POST(
       return fail("VALIDATION", formatZodError(parsed.error), 400);
     }
     return withIdempotency(req, async () => {
-      const data = await recordReferralAcceptance(actor, params.code, {
+      const data = await recordReferralAcceptance(actor, code, {
         referralId: parsed.data.referralId,
         accepted: parsed.data.accepted,
         message: parsed.data.message,
       });
       return { status: 201, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: parsed.data });
   });
 }

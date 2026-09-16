@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   description: "Sigue el estado de un reporte ciudadano en Falta la Muni.",
 };
 
-export default function ReportPage({ params }: { params: { code: string } }) {
-  return <ReportDetail code={params.code} />;
+export default async function ReportPage({
+  params,
+}: {
+  params: Promise<{ code: string }>;
+}) {
+  const { code } = await params;
+  return <ReportDetail code={code} />;
 }

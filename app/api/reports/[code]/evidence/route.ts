@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { addEvidence } from "@/lib/services/reports";
-import { validateImageBytes } from "@/lib/services/media";
+import { sanitizeImageBytes } from "@/lib/services/media";
 import { evidenceJsonSchema, formatZodError } from "@/lib/validation/schemas";
 import {
   handle,
@@ -20,10 +20,11 @@ import { DomainError } from "@/lib/domain/types";
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const rl = rateLimited(`evidence:${actor.id}`, 20, 60_000);
     if (rl) return rl;
     const contentType = req.headers.get("content-type") ?? "";
@@ -39,8 +40,11 @@ export async function POST(
         return fail("VALIDATION", "Se requiere el campo `file`", 400);
       }
       const bytes = Buffer.from(await file.arrayBuffer());
-      const validated = validateImageBytes(bytes);
-      dataUrl = `data:${validated.mimeType};base64,${bytes.toString("base64")}`;
+      // Sanitización Sharp: la evidencia se almacena solo re-encodeada, sin
+      // metadatos ni payload trailing (addEvidence vuelve a sanitizar el
+      // dataURL como defensa en profundidad).
+      const sanitized = await sanitizeImageBytes(bytes);
+      dataUrl = sanitized.dataUrl;
       const d = form.get("description");
       if (typeof d === "string") description = d;
       const k = form.get("kind");
@@ -61,12 +65,12 @@ export async function POST(
     }
 
     return withIdempotency(req, async () => {
-      const data = await addEvidence(actor, params.code, {
+      const data = await addEvidence(actor, code, {
         dataUrl,
         description,
         kind,
       });
       return { status: 201, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: { dataUrl, description, kind } });
   });
 }

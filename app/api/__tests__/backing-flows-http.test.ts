@@ -181,7 +181,7 @@ describe("POST /api/reports/[code]/public-references (handler real)", () => {
         reference: "OF-2026-1187",
         summary: "Oficio de coordinación con empresa eléctrica.",
       }, w.paulaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: boolean; data: { id: string; reference: string } };
@@ -196,7 +196,7 @@ describe("POST /api/reports/[code]/public-references (handler real)", () => {
       req(`/api/reports/${w.code}/public-references`, {
         kind: "document", reference: "OF-1", summary: "Resumen válido aquí.",
       }),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(401);
   });
@@ -207,7 +207,7 @@ describe("POST /api/reports/[code]/public-references (handler real)", () => {
       req(`/api/reports/${w.code}/public-references`, {
         kind: "document", reference: "OF-1", summary: "Resumen válido aquí.",
       }, w.camilaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(403);
   });
@@ -218,7 +218,7 @@ describe("POST /api/reports/[code]/public-references (handler real)", () => {
       req(`/api/reports/${w.code}/public-references`, {
         kind: "url", reference: "nota interna sin protocolo", summary: "Resumen válido aquí.",
       }, w.paulaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -232,7 +232,7 @@ describe("POST /api/reports/[code]/public-references (handler real)", () => {
         kind: "document", reference: "OF-1", summary: "Resumen válido aquí.",
         organizationId: "org-t", actorId: "x", accredited: true,
       }, w.paulaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(400);
   });
@@ -247,7 +247,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
         accepted: true,
         message: "Aceptamos la derivación; cuadrilla programada.",
       }, w.extToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: boolean; data: { accepted: boolean } };
@@ -261,7 +261,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code}/referral-acceptances`, {
         referralId: w.referralId, accepted: true, message: "Mensaje válido aquí.",
       }),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(401);
   });
@@ -272,7 +272,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code}/referral-acceptances`, {
         referralId: w.referralId, accepted: true, message: "La muni finge ser la agencia.",
       }, w.paulaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(403);
   });
@@ -283,7 +283,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code}/referral-acceptances`, {
         referralId: w.referralId, accepted: true, message: "Otra agencia intenta responder.",
       }, w.ext2Token),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(res.status).toBe(403);
   });
@@ -294,7 +294,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code2}/referral-acceptances`, {
         referralId: w.referralId, accepted: true, message: "Mensaje válido aquí.",
       }, w.extToken),
-      { params: { code: w.code2 } }
+      { params: Promise.resolve({ code: w.code2 }) }
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -307,14 +307,14 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code}/referral-acceptances`, {
         referralId: w.referralId, accepted: true, message: "Aceptamos la derivación.",
       }, w.extToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(first.status).toBe(201);
     const second = await acceptPOST(
       req(`/api/reports/${w.code}/referral-acceptances`, {
         referralId: w.referralId, accepted: false, message: "Cambiamos de opinión.",
       }, w.extToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(second.status).toBe(409);
   });
@@ -326,7 +326,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
       req(`/api/reports/${w.code2}/public-references`, {
         kind: "document", reference: "OF-2026-9999", summary: "Referencia de otro reporte.",
       }, w.paulaToken),
-      { params: { code: w.code2 } }
+      { params: Promise.resolve({ code: w.code2 }) }
     );
     expect(refRes.status).toBe(201);
     const refId = ((await refRes.json()) as { data: { id: string } }).data.id;
@@ -337,7 +337,7 @@ describe("POST /api/reports/[code]/referral-acceptances (handler real)", () => {
         publicDescription: "Coordinación registrada con respaldo ajeno.",
         evidenceRef: refId,
       }, w.paulaToken),
-      { params: { code: w.code } }
+      { params: Promise.resolve({ code: w.code }) }
     );
     expect(actRes.status).toBe(400);
     const body = (await actRes.json()) as { error: { code: string } };

@@ -40,9 +40,7 @@ import {
   referToAgency,
   recordMunicipalAction,
   registerPublicReference,
-  recordReferralAcceptance,
   getReportByCode,
-  getTimeline,
 } from "@/lib/services/reports";
 import { evaluateVerificationQuorum } from "@/lib/domain/verification";
 import { hasCapability } from "@/lib/domain/permissions";

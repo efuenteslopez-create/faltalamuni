@@ -193,11 +193,11 @@ export function TimelineList({
                 <p className="mt-1">
                   {item.accredited ? (
                     <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-800">
-                      Respaldo verificado
+                      Respaldo público registrado
                     </span>
                   ) : (
                     <span className="rounded-full bg-flm-line px-2 py-0.5 text-xs font-semibold text-flm-muted">
-                      Declarada · sin respaldo verificado
+                      Declarada · sin respaldo público registrado
                     </span>
                   )}
                 </p>

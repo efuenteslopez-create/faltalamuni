@@ -28,8 +28,15 @@ export function ReportDetail({ code }: { code: string }) {
   const [voting, setVoting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Al cambiar de reporte se limpia el error durante el render (patrón
+  // documentado de React): evita setState sincrónico dentro del efecto.
+  const [lastCode, setLastCode] = useState(code);
+  if (lastCode !== code) {
+    setLastCode(code);
     setError(null);
+  }
+
+  const load = useCallback(async () => {
     try {
       const [detail, timeline] = await Promise.all([
         api.report(code),
@@ -47,6 +54,9 @@ export function ReportDetail({ code }: { code: string }) {
   }, [code]);
 
   useEffect(() => {
+    // load() solo actualiza estado en continuaciones asíncronas (tras await);
+    // el reinicio de error por cambio de reporte se hace durante el render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -123,7 +133,7 @@ export function ReportDetail({ code }: { code: string }) {
           description={error}
           action={
             <div className="flex gap-2">
-              <Button type="button" onClick={() => void load()}>Reintentar</Button>
+              <Button type="button" onClick={() => { setError(null); void load(); }}>Reintentar</Button>
               <Link href="/mapa" className="flm-btn-secondary">Volver al mapa</Link>
             </div>
           }

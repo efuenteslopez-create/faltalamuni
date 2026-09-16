@@ -21,7 +21,6 @@ import {
   assertCapability,
   canReadInternalNotes,
   hasCapability,
-  isInstitutionalRole,
 } from "@/lib/domain/permissions";
 import {
   evaluateVerificationQuorum,
@@ -57,14 +56,13 @@ import {
   checkVersion,
   get,
   loadReportTx,
-  orgRef,
   put,
   requireActor,
   resolveActionBacking,
   resolvingRound,
   toReportDto,
 } from "./common";
-import { validateImageDataUrl } from "./media";
+import { sanitizeImageDataUrl } from "./media";
 
 /** Estados que cierran el ciclo de detección de duplicados. */
 const TERMINAL_STATES: ReportState[] = [
@@ -134,7 +132,7 @@ export async function createReport(
 
   let photo: ReportMedia | null = null;
   if (input.photoDataUrl) {
-    const validated = validateImageDataUrl(input.photoDataUrl);
+    const validated = await sanitizeImageDataUrl(input.photoDataUrl);
     photo = {
       id: newId(),
       reportId: "", // se completa en la transacción
@@ -767,7 +765,7 @@ export async function addEvidence(
   input: { dataUrl: string; description?: string; kind: "problem" | "solution" }
 ): Promise<ResolutionEvidence> {
   const a = requireActor(actor);
-  const validated = validateImageDataUrl(input.dataUrl);
+  const validated = await sanitizeImageDataUrl(input.dataUrl);
   return transact((db) => {
     const report = loadReportTx(db, code);
     const isAuthor = report.authorId === a.id;
@@ -1016,12 +1014,6 @@ const EVIDENCE_BACKED_TYPES: MunicipalActionType[] = [
   "CONTRACTOR_ACTION_RECORDED",
   "SOLUTION_EVIDENCE_SUBMITTED",
 ];
-/** Tipos que exigen una PublicReference modelada y validada del mismo reporte. */
-const REFERENCE_BACKED_TYPES: MunicipalActionType[] = [
-  "EXTERNAL_COORDINATION_RECORDED",
-  "FOLLOW_UP_RECORDED",
-];
-
 /**
  * La organización que registra debe ser una municipalidad verificada y, o
  * bien la gestora del reporte, o bien la municipalidad de la comuna del

@@ -16,8 +16,9 @@ import { ReportState } from "@/lib/domain/types";
 /** POST /api/reports/[code]/transitions — cambio de estado institucional/moderación. */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
     const actor = await requireActor(req);
     const rl = rateLimited(`transition:${actor.id}`, 30, 60_000);
@@ -45,12 +46,12 @@ export async function POST(
       return fail("VALIDATION", formatZodError(parsed.error), 400);
     }
     return withIdempotency(req, async () => {
-      const data = await transitionReport(actor, params.code, {
+      const data = await transitionReport(actor, code, {
         to: parsed.data.to as ReportState,
         reason: parsed.data.reason,
         expectedVersion: parsed.data.expectedVersion,
       });
       return { status: 200, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: parsed.data });
   });
 }

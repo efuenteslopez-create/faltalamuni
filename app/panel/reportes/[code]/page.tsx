@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 import {
@@ -45,9 +45,10 @@ type Tab = "gestion" | "notas" | "historial";
 export default function ReportDetailPage({
   params,
 }: {
-  params: { code: string };
+  params: Promise<{ code: string }>;
 }) {
-  const code = decodeURIComponent(params.code);
+  const { code: rawCode } = use(params);
+  const code = decodeURIComponent(rawCode);
   const [me, setMe] = useState<SessionUser | null | undefined>(undefined);
   const [report, setReport] = useState<ReportDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);

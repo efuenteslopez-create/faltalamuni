@@ -9,11 +9,16 @@ import { buildActor } from "@/lib/auth/actor";
 import { registerSchema, formatZodError } from "@/lib/validation/schemas";
 import { audit } from "@/lib/audit";
 import { handle, ok, fail, rateLimited } from "@/lib/api/http";
+import { getClientIp } from "@/lib/security/ip";
 
 /** Registro de vecinos. Siempre rol RESIDENT (sin escalamiento por API). */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const rl = rateLimited(`register:${req.ip ?? "unknown"}`, 10, 60_000);
+    const rl = rateLimited(
+      `register:${getClientIp(req) ?? "unknown"}`,
+      10,
+      60_000
+    );
     if (rl) return rl;
     const body = await req.json();
     const parsed = registerSchema.safeParse(body);
@@ -39,7 +44,7 @@ export async function POST(req: NextRequest) {
       detail: { email: user.email },
     });
     const token = await createSession(user.id);
-    setSessionCookie(token);
+    await setSessionCookie(token);
     const actor = await buildActor(user);
     return ok(
       {

@@ -9,8 +9,13 @@ import { buildActor } from "@/lib/auth/actor";
 import { Actor } from "@/lib/domain/permissions";
 import { DomainError } from "@/lib/domain/types";
 import {
-  getIdempotentResponse,
-  saveIdempotentResponse,
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+  failIdempotencyKey,
+  waitForIdempotencyResult,
+  normalizeRoute,
+  stableBodyHash,
+  type IdempotencyFingerprint,
 } from "@/lib/idempotency";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -20,8 +25,16 @@ export function ok(data: unknown, status = 200): NextResponse {
 }
 
 /** Respuesta de error estándar: { ok: false, error: { code, message } }. */
-export function fail(code: string, message: string, status: number): NextResponse {
-  return NextResponse.json({ ok: false, error: { code, message } }, { status });
+export function fail(
+  code: string,
+  message: string,
+  status: number,
+  headers?: Record<string, string>
+): NextResponse {
+  return NextResponse.json(
+    { ok: false, error: { code, message } },
+    { status, headers }
+  );
 }
 
 const STATUS_BY_CODE: Record<string, number> = {
@@ -57,6 +70,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   ALREADY_CONFIRMED: 409,
   ALREADY_FOLLOWING: 409,
   ALREADY_ANSWERED: 409,
+  IDEMPOTENCY_CONFLICT: 409,
+  IDEMPOTENCY_UPSTREAM_FAILED: 502,
+  IDEMPOTENCY_TIMEOUT: 503,
   RATE_LIMITED: 429,
 };
 
@@ -112,30 +128,79 @@ export async function requireActor(req?: NextRequest): Promise<Actor> {
   return actor;
 }
 
-/**
- * Idempotencia a nivel de handler (spec §11): si el header `Idempotency-Key`
- * ya se procesó, retorna la respuesta original sin re-ejecutar la mutación.
- */
-export async function withIdempotency(
-  req: Request,
-  run: () => Promise<{ status: number; body: unknown }>
-): Promise<NextResponse> {
-  const key = req.headers.get("Idempotency-Key");
-  if (key) {
-    const cached = await getIdempotentResponse(key);
-    if (cached) {
-      return NextResponse.json(cached.body, { status: cached.statusCode });
-    }
-  }
-  const { status, body } = await run();
-  if (key) {
-    await saveIdempotentResponse(key, status, body);
-  }
-  return NextResponse.json(body, { status });
+/** Opciones de identidad para `withIdempotency`. */
+export interface IdempotencyOptions {
+  /** Id del actor autenticado que ejecuta la mutación. */
+  actorId?: string | null;
+  /**
+   * Cuerpo ya parseado/validado para el hash estable de identidad.
+   * Alternativa: `bodyHash` precomputado (p. ej. evidencia multipart).
+   */
+  body?: unknown;
+  /** Hash precomputado; si se entrega, se usa en vez de `body`. */
+  bodyHash?: string;
 }
 
 /**
- * Rate limit; retorna una respuesta 429 si se excede, o null si está permitido.
+ * Idempotencia a nivel de handler (spec §11, iteración 2 con concurrencia):
+ * la identidad es (clave, actor, método, ruta normalizada, hash del body).
+ *
+ * - Misma identidad concurrente: un solo efecto; los demás esperan y reciben
+ *   el mismo status/body.
+ * - Misma identidad ya completada: replay sin re-ejecutar (no se cachean 500).
+ * - Distinta identidad con la misma clave: 409 IDEMPOTENCY_CONFLICT.
+ */
+export async function withIdempotency(
+  req: Request,
+  run: () => Promise<{ status: number; body: unknown }>,
+  opts: IdempotencyOptions = {}
+): Promise<NextResponse> {
+  const key = req.headers.get("Idempotency-Key")?.trim();
+  if (!key) {
+    const { status, body } = await run();
+    return NextResponse.json(body, { status });
+  }
+  const fingerprint: IdempotencyFingerprint = {
+    actorId: opts.actorId ?? null,
+    method: (req.method ?? "POST").toUpperCase(),
+    route: normalizeRoute(req.url),
+    bodyHash: opts.bodyHash ?? stableBodyHash(opts.body ?? null),
+  };
+  const claim = await claimIdempotencyKey(key, fingerprint);
+  if (claim.outcome === "replay") {
+    return NextResponse.json(claim.body, { status: claim.statusCode });
+  }
+  if (claim.outcome === "conflict") {
+    return fail(
+      "IDEMPOTENCY_CONFLICT",
+      "La clave de idempotencia ya fue usada con otra solicitud (distinto actor, ruta, método o cuerpo)",
+      409
+    );
+  }
+  if (claim.outcome === "wait") {
+    const result = await waitForIdempotencyResult(key);
+    return NextResponse.json(result.body, { status: result.statusCode });
+  }
+  // Líder: ejecuta el efecto una sola vez.
+  try {
+    const { status, body } = await run();
+    if (status >= 500) {
+      // Los 500 no se cachean: el reintento con la misma clave reclama y
+      // re-ejecuta.
+      await failIdempotencyKey(key, claim.claimId);
+    } else {
+      await completeIdempotencyKey(key, claim.claimId, status, body);
+    }
+    return NextResponse.json(body, { status });
+  } catch (err) {
+    await failIdempotencyKey(key, claim.claimId);
+    throw err;
+  }
+}
+
+/**
+ * Rate limit; retorna una respuesta 429 con cabecera Retry-After si se
+ * excede, o null si está permitido.
  */
 export function rateLimited(
   key: string,
@@ -144,10 +209,12 @@ export function rateLimited(
 ): NextResponse | null {
   const r = checkRateLimit(key, { limit, windowMs });
   if (!r.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((r.resetAt - Date.now()) / 1000));
     return fail(
       "RATE_LIMITED",
       "Demasiadas solicitudes. Intenta nuevamente en unos segundos.",
-      429
+      429,
+      { "Retry-After": String(retryAfter) }
     );
   }
   return null;

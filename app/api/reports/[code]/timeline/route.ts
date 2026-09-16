@@ -5,11 +5,12 @@ import { handle, ok, getActor } from "@/lib/api/http";
 /** GET /api/reports/[code]/timeline — historia pública del reporte. */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
     const actor = await getActor(req);
-    const data = await getTimeline(params.code, actor);
+    const data = await getTimeline(code, actor);
     return ok(data);
   });
 }

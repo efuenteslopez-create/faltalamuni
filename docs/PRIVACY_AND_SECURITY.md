@@ -35,7 +35,7 @@ En el MVP demo las fotos viajan como dataURL validados. En producción irán a S
 | Cabeceras | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` (cámara/geolocalización solo self) en `next.config.mjs` |
 | Rutas | `middleware.ts` redirige `/panel/**` y `/perfil/**` sin sesión a `/login?next=…`; el rol lo valida cada página/API |
 | PWA | El service worker **nunca cachea `/api`** ni datos privados |
-| Auditoría | Append-only (`lib/audit.ts`): quién hizo qué, cuándo, sobre qué |
+| Auditoría | Append-only con cadena tamper-evident (`lib/audit.ts`): cada evento enlaza `previousHash` + `hash` SHA-256 del contenido canónico; `verifyAuditChain` detecta alteraciones, eliminaciones y reordenamientos. Tamper-evident ≠ tamper-proof: no sustituye restricciones/almacenamiento en Postgres |
 
 ## Lo que el MVP NO garantiza (honestidad técnica)
 

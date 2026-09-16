@@ -6,7 +6,7 @@ import { handle, requireActor, parseQuery, fail } from "@/lib/api/http";
 /** GET /api/panel/export.csv — exportación CSV (MUNICIPAL_MANAGER, su comuna). */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const actor = await requireActor();
+    const actor = await requireActor(req);
     const q = parseQuery(exportQuerySchema, req);
     const municipalityId = q.municipalityId ?? actor.municipalityIds[0];
     if (!municipalityId) {

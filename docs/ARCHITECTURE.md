@@ -20,7 +20,7 @@ flowchart TB
         IDEM["lib/idempotency: claves de idempotencia"]
         VAL["lib/validation/schemas.ts (Zod)"]
         SEC["lib/security.ts\nsanitizeText, magic bytes, safeRedirect"]
-        AUD["lib/audit.ts: append-only"]
+        AUD["lib/audit.ts: append-only\ncadena tamper-evident"]
         DOM["lib/domain: state-machine,\npermissions, geo, types"]
         SVC["lib/services/**: casos de uso"]
     end

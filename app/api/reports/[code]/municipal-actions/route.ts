@@ -21,8 +21,9 @@ import { MunicipalActionType } from "@/lib/domain/entities";
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
     const actor = await requireActor(req);
     const rl = rateLimited(`municipal-action:${actor.id}`, 30, 60_000);
@@ -33,12 +34,12 @@ export async function POST(
       return fail("VALIDATION", formatZodError(parsed.error), 400);
     }
     return withIdempotency(req, async () => {
-      const data = await recordMunicipalAction(actor, params.code, {
+      const data = await recordMunicipalAction(actor, code, {
         type: parsed.data.type as MunicipalActionType,
         publicDescription: parsed.data.publicDescription,
         evidenceRef: parsed.data.evidenceRef,
       });
       return { status: 201, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: parsed.data });
   });
 }

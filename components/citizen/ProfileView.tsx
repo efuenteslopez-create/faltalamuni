@@ -34,6 +34,15 @@ export function ProfileView() {
   const [failed, setFailed] = useState<string[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
 
+  // Al cambiar de usuario se vuelve a "cargando" durante el render (patrón
+  // documentado de React): evita setState sincrónico dentro del efecto.
+  const activeUserId = user?.id ?? null;
+  const [lastUserId, setLastUserId] = useState<string | null>(activeUserId);
+  if (lastUserId !== activeUserId) {
+    setLastUserId(activeUserId);
+    setLoadingReports(true);
+  }
+
   useEffect(() => {
     if (!loading && !user) {
       router.replace(`/login?next=${encodeURIComponent("/perfil")}`);
@@ -50,12 +59,10 @@ export function ProfileView() {
         codes.push(c);
       }
     }
-    if (codes.length === 0) {
-      setLoadingReports(false);
-      return;
-    }
     let cancelled = false;
-    setLoadingReports(true);
+    // Promise.allSettled([]) se resuelve de forma asíncrona con []: el caso
+    // "sin reportes" queda cubierto por la misma continuación, sin setState
+    // sincrónico dentro del efecto.
     Promise.allSettled(codes.map((c) => api.report(c))).then((results) => {
       if (cancelled) return;
       const ok: Record<string, ReportDetail> = {};

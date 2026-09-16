@@ -117,7 +117,7 @@ describe("timeline ciudadano: acción municipal desde el endpoint real", () => {
     // Handler REAL del endpoint público (sin sesión: vista ciudadana).
     const res = await timelineGET(
       new NextRequest(`http://localhost/api/reports/${code}/timeline`),
-      { params: { code } }
+      { params: Promise.resolve({ code }) }
     );
     expect(res.status).toBe(200);
     const payload = (await res.json()) as { ok: boolean; data: TimelineItem[] };
@@ -134,7 +134,7 @@ describe("timeline ciudadano: acción municipal desde el endpoint real", () => {
     expect(
       screen.getByText("Coordinación registrada con la empresa eléctrica.")
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Respaldo verificado").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Respaldo público registrado").length).toBeGreaterThan(0);
 
     // Respaldo URL: enlace seguro http/https con target y rel correctos.
     const link = screen.getByRole("link", {

@@ -48,6 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // refresh() solo actualiza estado en continuaciones asíncronas (tras
+    // await api.me()); no hay setState sincrónico en el cuerpo del efecto.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 

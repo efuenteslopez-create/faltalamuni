@@ -25,8 +25,9 @@ import { PublicReferenceKind } from "@/lib/domain/entities";
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
+  const { code } = await params;
   return handle(async () => {
     const actor = await requireActor(req);
     const rl = rateLimited(`public-reference:${actor.id}`, 30, 60_000);
@@ -37,12 +38,12 @@ export async function POST(
       return fail("VALIDATION", formatZodError(parsed.error), 400);
     }
     return withIdempotency(req, async () => {
-      const data = await registerPublicReference(actor, params.code, {
+      const data = await registerPublicReference(actor, code, {
         kind: parsed.data.kind as PublicReferenceKind,
         reference: parsed.data.reference,
         summary: parsed.data.summary,
       });
       return { status: 201, body: { ok: true, data } };
-    });
+    }, { actorId: actor.id, body: parsed.data });
   });
 }

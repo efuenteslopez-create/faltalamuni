@@ -23,6 +23,7 @@ import {
   User,
 } from "@/lib/domain/types";
 import { assertTransition, ActorRole } from "@/lib/domain/state-machine";
+import { buildAuditEventTx } from "@/lib/audit";
 import { Actor, inScope, isInstitutionalRole } from "@/lib/domain/permissions";
 import {
   Confirmation,
@@ -31,7 +32,6 @@ import {
   Municipality,
   PossibleDuplicate,
   PublicReference,
-  Referral,
   ReferralAcceptance,
   ReportDto,
   ReportMedia,
@@ -68,6 +68,9 @@ export function all<T>(db: Database, coll: CollectionName): T[] {
 /**
  * Auditoría dentro de una transacción existente. NO usar `audit()` de
  * lib/audit.ts aquí: hace su propio `transact` y se bloquearía.
+ * La construcción (enlace previousHash + hash SHA-256) está centralizada en
+ * `buildAuditEventTx`: este es el único otro camino de creación y usa el mismo
+ * constructor, dentro de la transacción del llamador.
  */
 export function auditTx(
   db: Database,
@@ -79,16 +82,7 @@ export function auditTx(
     detail?: Record<string, unknown>;
   }
 ): void {
-  const event: AuditEvent = {
-    id: newId(),
-    action: input.action,
-    actorId: input.actorId,
-    entityType: input.entityType,
-    entityId: input.entityId,
-    detail: input.detail ?? {},
-    createdAt: nowIso(),
-  };
-  put(db, "auditEvents", event);
+  put(db, "auditEvents", buildAuditEventTx(db, input));
 }
 
 /** Busca un reporte por código público o lanza REPORT_NOT_FOUND. */

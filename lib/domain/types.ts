@@ -172,7 +172,11 @@ export interface Membership {
   createdAt: string;
 }
 
-/** Evento de auditoría append-only. */
+/**
+ * Evento de auditoría append-only con cadena tamper-evident (iteración 2).
+ * `previousHash` enlaza con el evento anterior (null en el génesis) y `hash`
+ * es el SHA-256 del contenido canónico del evento. Ver lib/audit.ts.
+ */
 export interface AuditEvent {
   id: string;
   action: string;
@@ -181,6 +185,10 @@ export interface AuditEvent {
   entityId: string;
   detail: Record<string, unknown>;
   createdAt: string;
+  /** Hash del evento anterior en orden cronológico; null en el génesis. */
+  previousHash: string | null;
+  /** SHA-256 del contenido canónico (todos los campos salvo `hash`). */
+  hash: string;
 }
 
 export class DomainError extends Error {
